@@ -18,6 +18,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
+      - run: bun run build
       - run: bun test
       - name: Refuse a tag that disagrees with package.json
         run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
