@@ -12,7 +12,18 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 - **TV guide:** XMLTV (plain or `.gz`), taken from the playlist's `url-tvg` or given by hand. Channels are matched by `tvg-id`, then by name. Shows what's on now and next, with progress bars and a full guide grid.
 - **Catch-up:** Xtream timeshift, plus the M3U `catchup` / `catchup-source` / `tvg-rec` forms (`default`, `append`, `shift`, `flussonic`).
 - **Playback** through [`@profullstack/player`](https://github.com/profullstack/player): HLS (hls.js), MPEG-TS (mpegts.js) and MP4. It restarts stalled live streams and explains codec failures.
+- **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/search?q=`, `/guide`, `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
+- **A global nav** with Live TV, TV Guide, ★ Favorites, Recent, Search, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
 - **The TiviMate basics:** ↑/↓ zaps channels, OK opens the list, ◀ opens groups, digits jump to a channel number, Back returns to the last channel. Favorites, recents and search are built in. Works with a mouse, touch, a keyboard or a TV remote (Fire TV, Android TV, webOS, Tizen keys).
+
+## Accounts
+
+An account is optional. It keeps your playlists, favorites and recent channels the same on every screen you watch on.
+
+- **Username and password.** Sign in with either your username or your email. A TV has no mail client and no passkey, so a password is the way in on one.
+- **The email is confirmed before the account can sign in.** The link signs you straight in, and "Forgot your password?" sends a reset link.
+- **The CLI and TUI sign in with OAuth 2.1:** `hdtilt login` opens the browser (authorization code + PKCE, a loopback redirect), and `hdtilt login --manual` works over SSH by pasting a code. Tokens live in `~/.config/hdtilt/auth.json` (0600). `hdtilt sync` merges the account's playlists and favorites into the local config, and `hdtilt tui` syncs when it starts.
+- Provider logins inside a synced library are encrypted at rest (AES-256-GCM).
 
 ## Every surface
 
@@ -56,6 +67,7 @@ hdtilt guide <channel> [--hours 12] [--from -6]
 hdtilt url <channel> [--at <iso-time>]      # --at = catch-up
 hdtilt play <channel> [--player mpv|vlc|ffplay]
 hdtilt fav <channel>
+hdtilt login [--manual] | whoami | sync | logout
 hdtilt tui | serve [--port] [--host] [--public] | mcp
 ```
 
@@ -80,6 +92,10 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 | POST | `/api/guide` | `{ url, channels:[{id,name,tvgId}], from?, to? }` → `{ programmes: { [channelId]: [...] } }` |
 | POST | `/api/nownext` | `{ url, channels }` → `{ [channelId]: { now, next } }` |
 | GET | `/api/playlists`, `/api/playlists/:name` | local installs only |
+| POST | `/api/auth/register` `login` `verify` `resend` `forgot` `reset` `refresh` `logout` | accounts (20 tries a minute per address) |
+| GET | `/api/me` | the signed-in account (`Authorization: Bearer`, a session or an OAuth token) |
+| GET / PUT | `/api/library` | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first |
+| GET | `/.well-known/oauth-authorization-server` | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli` |
 | GET | `/p/<base64url>/<name.ext>` | stream proxy; HLS playlists are rewritten so segments and keys come back through it |
 | POST | `/mcp` | MCP JSON-RPC |
 
@@ -99,7 +115,7 @@ bun install && bun run build
 PORT=8930 node bin/hdtilt.js serve --host 0.0.0.0 --public   # --public for a shared server
 ```
 
-Environment: `PORT`, `HOST`, `HDTILT_PUBLIC=1`, `HDTILT_UA` (the user-agent sent to providers), `HDTILT_HOME` / `HDTILT_CACHE`, `HDTILT_PLAYER`.
+Environment: `PORT`, `HOST`, `HDTILT_PUBLIC=1`, `HDTILT_JWT_SECRET` (turns accounts on), `DATABASE_URL` (Postgres for accounts; memory without it), `HDTILT_LIBRARY_KEY`, `RESEND_API_KEY`, `MAIL_FROM`, `SITE_URL`, `HDTILT_ISSUER` (the CLI's account server), `HDTILT_UA` (the user-agent sent to providers), `HDTILT_HOME` / `HDTILT_CACHE`, `HDTILT_PLAYER`.
 
 ## Development
 

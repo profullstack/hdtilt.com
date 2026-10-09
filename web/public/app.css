@@ -488,42 +488,119 @@ select {
   background: none;
 }
 
-/* ---- dock (mouse/touch) ------------------------------------------------- */
-.dock {
+/* ---- global nav --------------------------------------------------------- */
+:root {
+  --nav-h: 3.6rem;
+}
+.nav {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--nav-h);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.2rem;
+  background: linear-gradient(to bottom, rgba(5, 8, 12, 0.96), rgba(5, 8, 12, 0.88));
+  border-bottom: 1px solid var(--line);
+}
+.nav .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  flex: none;
+}
+.nav .brand img {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+.nav-items {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-items::-webkit-scrollbar {
+  display: none;
+}
+.nav-items button {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-items button:hover {
+  color: var(--text);
+  background: var(--focus);
+}
+.nav-items button.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.nav-items button.focus {
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-weight: 700;
+}
+.nav-items button[data-act="favs"] {
+  color: #fbbf24;
+}
+.nav-items button[data-act="favs"].focus {
+  color: var(--accent-ink);
+}
+.nav-items #nav-account {
+  margin-left: auto;
+}
+body.nav-on .list,
+body.nav-on .guide {
+  top: var(--nav-h);
+}
+body.nav-on .sheet {
+  top: var(--nav-h);
+}
+body.nav-on .clock {
+  top: calc(var(--nav-h) + 1rem);
+}
+.toast {
   position: absolute;
   left: 50%;
-  bottom: 1.6rem;
+  top: calc(var(--nav-h) + 1rem);
   transform: translateX(-50%);
-  display: flex;
-  gap: 0.4rem;
-  padding: 0.4rem;
-  border-radius: 16px;
-  background: var(--panel);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  z-index: 5;
-}
-.dock button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.15rem;
-  min-width: 5.6rem;
-  padding: 0.6rem 0.8rem;
-  border: 0;
+  z-index: 20;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 0.7rem 1.1rem;
   border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.code {
+  font:
+    700 1.6rem / 1.2 ui-monospace,
+    monospace;
+  letter-spacing: 0.06em;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1rem;
+  border-radius: 10px;
+  text-align: center;
+  word-break: break-all;
+  user-select: all;
+}
+.linkbtn {
   background: none;
+  border: 0;
+  color: var(--accent);
   cursor: pointer;
-  font-size: 0.8rem;
-  color: var(--dim);
-}
-.dock button span {
-  font-size: 1.4rem;
-  color: var(--text);
-}
-.dock button:hover,
-.dock button.focus {
-  background: var(--focus);
-  color: var(--text);
+  padding: 0;
 }
 
 /* ---- sheet (setup + settings) ------------------------------------------- */
@@ -625,7 +702,7 @@ label {
 .btn:focus-visible,
 .field:focus-visible,
 .tabs button:focus-visible,
-.dock button:focus-visible {
+.nav-items button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -719,15 +796,14 @@ label {
   .g-times {
     left: 7.5rem;
   }
-  .dock {
-    left: 16px;
-    right: 16px;
-    transform: none;
-    justify-content: space-between;
+  .nav {
+    padding: 0 16px 0 12px;
+    gap: 0.6rem;
   }
-  .dock button {
-    min-width: 0;
-    flex: 1;
-    padding: 0.5rem 0.2rem;
+  .nav .brand {
+    font-size: 0;
+  }
+  .nav-items #nav-account {
+    margin-left: 0;
   }
 }

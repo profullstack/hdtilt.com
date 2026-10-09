@@ -7,12 +7,16 @@ import { progress } from '../core/epg.js';
 import { loadGuide, nowNextFor } from '../core/guide.js';
 import { groupsOf } from '../core/sources.js';
 import { play } from './player.js';
+import { pushQuietly } from './sync.js';
 
 const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
 const ALL = 'All channels';
 const FAV = '★ Favorites';
 
 export async function runTui({ playlist } = {}) {
+  // Signed in with `hdtilt login`: take the account's playlists and favorites
+  // first, but never let a slow network hold the guide back.
+  await Promise.race([pushQuietly(), new Promise((r) => setTimeout(r, 4000))]);
   let pl = await channelsFor(playlist);
   const cfg = await readConfig();
   const favs = new Set(cfg.favorites[pl.name] || []);
@@ -124,6 +128,7 @@ export async function runTui({ playlist } = {}) {
       const c = await readConfig();
       c.favorites[pl.name] = [...favs];
       await writeConfig(c);
+      pushQuietly();
       status = favs.has(ch.id) ? `★ ${ch.name}` : `Removed ${ch.name} from favorites`;
       app.invalidate();
       return;

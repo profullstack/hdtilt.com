@@ -14,6 +14,7 @@ import { fetchPublic } from '../core/publicurl.js';
 import { groupsOf, loadSource } from '../core/sources.js';
 import { b64urlDecode, proxyPath } from '../core/util.js';
 import { VERSION } from '../version.js';
+import { createAccounts } from './accounts.js';
 import { handleRpc } from './mcp.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +54,21 @@ export function createApp(opts = {}) {
     return res;
   };
   const ctx = { public: isPublic, fetch: guardedFetch };
+  const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
+
+  // Sign-in and sign-up are the guessable endpoints: 20 tries a minute per address.
+  const authPerMinute = opts.authPerMinute ?? 20;
+  const hits = new Map();
+  const limited = (ip) => {
+    const now = Date.now();
+    const h = hits.get(ip);
+    if (!h || now - h.at > 60_000) {
+      hits.set(ip, { at: now, n: 1 });
+      if (hits.size > 10_000) hits.clear();
+      return false;
+    }
+    return ++h.n > authPerMinute;
+  };
 
   const clientIp = (req) =>
     (isPublic &&
@@ -156,7 +172,18 @@ export function createApp(opts = {}) {
   }
 
   async function api(req, res, path) {
-    if (path === '/api/health') return send(res, 200, { ok: true, version: VERSION, public: isPublic });
+    if (path === '/api/health')
+      return send(res, 200, { ok: true, version: VERSION, public: isPublic, accounts: Boolean(accounts) });
+
+    if (
+      path.startsWith('/api/auth/') ||
+      path === '/api/me' ||
+      path === '/api/library' ||
+      path === '/api/oauth/authorize'
+    ) {
+      if (!accounts) return send(res, 404, { error: 'accounts are not enabled on this server' });
+      return account(req, res, path);
+    }
 
     // Load a playlist the browser holds. Stateless: nothing is stored.
     if (path === '/api/load' && req.method === 'POST') {
@@ -202,6 +229,80 @@ export function createApp(opts = {}) {
     return send(res, 404, { error: 'no such endpoint' });
   }
 
+  /** Token and revocation endpoints take a form body (RFC 6749) or JSON. */
+  const readBody = async (req) => {
+    const type = String(req.headers['content-type'] || '');
+    if (type.includes('application/json')) return readJson(req);
+    const parts = [];
+    for await (const c of req) parts.push(c);
+    return Object.fromEntries(new URLSearchParams(Buffer.concat(parts).toString('utf8')));
+  };
+
+  async function oauthEndpoint(req, res, path) {
+    if (path === '/.well-known/oauth-authorization-server') return send(res, 200, accounts.oauth.metadata());
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
+    if (limited(clientIp(req))) return send(res, 429, { error: 'slow_down' });
+    const body = await readBody(req);
+    try {
+      if (path === '/oauth/revoke') {
+        await accounts.revoke(body.token);
+        return send(res, 200, {});
+      }
+      return send(res, 200, await accounts.token(body));
+    } catch (e) {
+      return send(res, e.status || 400, { error: e.code || 'invalid_request', error_description: e.message });
+    }
+  }
+
+  async function account(req, res, path) {
+    const fail = (e, status = 400) =>
+      send(res, e.code === 'conflict' ? 409 : status, { error: e.message, ...(e.code ? { code: e.code } : {}) });
+    if (path.startsWith('/api/auth/')) {
+      if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
+      if (limited(clientIp(req))) return send(res, 429, { error: 'Too many tries; wait a minute' });
+      const b = await readJson(req);
+      try {
+        switch (path) {
+          case '/api/auth/register':
+            return send(res, 200, await accounts.register(b));
+          case '/api/auth/verify':
+            return send(res, 200, await accounts.verify(b.token));
+          case '/api/auth/login':
+            return send(res, 200, await accounts.login(b));
+          case '/api/auth/resend':
+            return send(res, 200, await accounts.resendVerification(b.email));
+          case '/api/auth/forgot':
+            return send(res, 200, await accounts.forgot(b.email));
+          case '/api/auth/reset':
+            return send(res, 200, await accounts.reset(b));
+          case '/api/auth/refresh':
+            return send(res, 200, await accounts.refresh(b.refreshToken));
+          case '/api/auth/logout':
+            return send(res, 200, await accounts.logout(b));
+        }
+      } catch (e) {
+        return fail(e, path === '/api/auth/login' || path === '/api/auth/refresh' ? 401 : 400);
+      }
+      return send(res, 404, { error: 'no such endpoint' });
+    }
+    const claims = await accounts.whoFrom(req.headers.authorization);
+    if (!claims) return send(res, 401, { error: 'Sign in first' });
+    try {
+      if (path === '/api/me') return send(res, 200, await accounts.me(claims));
+      // The consent page: only a browser session (not another OAuth token) may grant one.
+      if (path === '/api/oauth/authorize') {
+        if (claims.via === 'oauth') return send(res, 403, { error: 'Sign in on the website to approve' });
+        const b = await readJson(req);
+        return send(res, 200, await accounts.authorize(claims, b.query || {}, b.decision));
+      }
+      if (req.method === 'GET') return send(res, 200, await accounts.getLibrary(claims));
+      if (req.method === 'PUT') return send(res, 200, await accounts.putLibrary(claims, await readJson(req, 8 << 20)));
+      return send(res, 405, { error: 'GET or PUT' });
+    } catch (e) {
+      return fail(e);
+    }
+  }
+
   async function mcp(req, res) {
     if (req.method === 'GET') return send(res, 405, 'POST JSON-RPC here', { allow: 'POST' });
     const body = await readJson(req);
@@ -243,13 +344,18 @@ export function createApp(opts = {}) {
     try {
       if (req.method === 'OPTIONS') {
         return send(res, 204, '', {
-          'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-headers': 'content-type, range, mcp-protocol-version, mcp-session-id',
+          'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+          'access-control-allow-headers': 'content-type, range, authorization, mcp-protocol-version, mcp-session-id',
         });
       }
       const pm = /^\/p\/([A-Za-z0-9_-]+)(?:\/[^/]*)?$/.exec(path);
       if (pm) return await proxy(req, res, pm[1]);
       if (path === '/mcp') return await mcp(req, res);
+      if (
+        accounts &&
+        (path === '/.well-known/oauth-authorization-server' || path === '/oauth/token' || path === '/oauth/revoke')
+      )
+        return await oauthEndpoint(req, res, path);
       if (path.startsWith('/api/')) return await api(req, res, path);
       return await staticFile(req, res, path);
     } catch (e) {
