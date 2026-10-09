@@ -123,6 +123,12 @@ describe('CLI + stdio MCP', () => {
     const ch = await cli(['channels', '--json']);
     expect(JSON.parse(ch.out)).toHaveLength(3);
   });
+  it('does not keep a playlist that fails to load', async () => {
+    const r = await cli(['add', 'broken', `${P.base}/missing.m3u`]);
+    expect(r.err).toContain('404');
+    const list = await cli(['playlists', '--json']);
+    expect(JSON.parse(list.out).map((p) => p.name)).not.toContain('broken');
+  });
   it('speaks MCP on stdio against the saved playlist', async () => {
     const msgs = [
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
