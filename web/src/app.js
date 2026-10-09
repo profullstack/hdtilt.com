@@ -291,7 +291,10 @@ function hideChrome() {
 
 function logo(ch, cls) {
   // "Channel 10" -> C10, "BBC One HD" -> BO: a number is worth more than a letter.
-  const words = ch.name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean);
+  const words = ch.name
+    .replace(/[^\p{L}\p{N} ]/gu, '')
+    .split(/\s+/)
+    .filter(Boolean);
   const initials = esc(
     words
       .slice(0, 2)
