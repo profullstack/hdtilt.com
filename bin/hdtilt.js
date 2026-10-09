@@ -28,6 +28,10 @@ Watching
   hdtilt play <channel> [--at <iso-time>] [--player mpv|vlc|ffplay]
   hdtilt fav <channel>             toggle a favorite
 
+Account (sync playlists and favorites with hdtilt.com)
+  hdtilt login [--manual]          sign in through the browser (OAuth 2.1 + PKCE)
+  hdtilt whoami | sync | logout
+
 Surfaces
   hdtilt tui                       terminal guide
   hdtilt serve [--port 8930] [--host 127.0.0.1] [--public]
@@ -54,6 +58,7 @@ const { values: o, positionals } = parseArgs({
     port: { type: 'string' },
     host: { type: 'string' },
     public: { type: 'boolean' },
+    manual: { type: 'boolean' },
     json: { type: 'boolean' },
     limit: { type: 'string', short: 'n' },
     help: { type: 'boolean', short: 'h' },
@@ -103,6 +108,7 @@ const commands = {
     console.log(
       `Saved ${name}: ${pl.channels.length} channels in ${groupsOf(pl.channels).length} groups${pl.epgUrl ? ', guide found' : ', no guide (add one with --epg)'}`,
     );
+    await (await import('../src/cli/sync.js')).pushQuietly();
   },
   async playlists() {
     const cfg = await readConfig();
@@ -125,8 +131,18 @@ const commands = {
     console.log(`Default playlist: ${args[0]}`);
   },
   async remove() {
+    const cfg = await readConfig();
+    // Remembered so a sync does not bring it back from another device.
+    const id = cfg.libraryIds?.[args[0]];
     await removePlaylist(args[0]);
+    if (id) {
+      const after = await readConfig();
+      after.deletedIds = [...new Set([...(after.deletedIds || []), id])];
+      delete after.libraryIds?.[args[0]];
+      await writeConfig(after);
+    }
     console.log(`Removed ${args[0]}`);
+    await (await import('../src/cli/sync.js')).pushQuietly();
   },
   async refresh() {
     const pl = await channelsFor(args[0] || o.playlist, { refresh: true });
@@ -207,6 +223,29 @@ const commands = {
     cfg.favorites[pl.name] = [...s];
     await writeConfig(cfg);
     console.log(`${s.has(ch.id) ? '★ added' : 'removed'} ${ch.name}`);
+    await (await import('../src/cli/sync.js')).pushQuietly();
+  },
+  async login() {
+    const { signIn, sync } = await import('../src/cli/sync.js');
+    const me = await signIn({ manual: o.manual });
+    console.log(`Signed in as ${me.username || me.email}`);
+    const r = await sync();
+    console.log(`Synced ${r.playlists} playlist(s)${r.added ? `, ${r.added} new on this machine` : ''}`);
+  },
+  async logout() {
+    const { signOut } = await import('../src/cli/sync.js');
+    await signOut();
+    console.log('Signed out');
+  },
+  async whoami() {
+    const { whoami, issuer } = await import('../src/cli/sync.js');
+    const me = await whoami();
+    out(me, () => `${me.username || ''} <${me.email}> on ${issuer()}`);
+  },
+  async sync() {
+    const { sync } = await import('../src/cli/sync.js');
+    const r = await sync();
+    console.log(`Synced ${r.playlists} playlist(s)${r.added ? `, ${r.added} new on this machine` : ''}`);
   },
   async tui() {
     const { runTui } = await import('../src/cli/tui.js');

@@ -5,6 +5,7 @@ import { attachSource, isTvBrowser } from '@profullstack/player';
 import { indexAt, nowNext, progress } from '../../src/core/epg.js';
 import { catchupUrl, groupsOf } from '../../src/core/sources.js';
 import { proxyPath } from '../../src/core/util.js';
+import * as account from './account.js';
 import * as api from './data.js';
 import * as store from './store.js';
 
@@ -68,13 +69,23 @@ async function boot() {
       S.playlists.push({ id: `saved:${s.name}`, name: s.name, source: { type: 'saved', name: s.name } });
     }
   }
+  account.attachSync(collectLibrary, mergeLibrary);
+  account.onChange(updateNavAccount);
+  updateNavAccount();
+  // A new device that is signed in starts with the account's playlists.
+  if (!S.playlists.length && account.current()) await account.syncNow().catch(() => {});
   const cur = store.prefs.read('current', null);
   const pl = S.playlists.find((p) => p.id === cur) || S.playlists[0];
-  if (!pl) return openSetup();
-  await usePlaylist(pl);
+  if (account.current()) account.syncNow().catch(() => {});
+  // A deep link to a channel plays that one rather than the last one watched.
+  const linked = /^\/watch\/([^/]+)/.exec(location.pathname)?.[1];
+  if (pl) await usePlaylist(pl, { channelId: linked ? decodeURIComponent(linked) : null });
+  if (await handleRoute()) return;
+  if (!pl && !/^\/(account|settings)/.test(location.pathname)) return go('/settings/add', { replace: true });
+  render(location.pathname + location.search);
 }
 
-async function usePlaylist(pl, { refresh = false } = {}) {
+async function usePlaylist(pl, { refresh = false, channelId = null } = {}) {
   S.pl = pl;
   store.prefs.write('current', pl.id);
   stageMsg(`Loading ${esc(pl.name)}…`);
@@ -93,7 +104,7 @@ async function usePlaylist(pl, { refresh = false } = {}) {
   S.favs = new Set(await store.get(`fav:${pl.id}`, []));
   S.recent = await store.get(`recent:${pl.id}`, []);
   buildGroups();
-  const last = S.byId.get(store.prefs.read(`last:${pl.id}`, null)) || S.live[0];
+  const last = S.byId.get(channelId) || S.byId.get(store.prefs.read(`last:${pl.id}`, null)) || S.live[0];
   if (last) play(last);
   else stageMsg('<strong>No live channels in this playlist</strong>');
 }
@@ -167,8 +178,10 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
   S.playing = ch;
   S.catchup = programme ? { programme } : null;
   store.prefs.write(`last:${S.pl.id}`, ch.id);
+  if (S.mode === 'tv' && /^\/(watch\/|$)/.test(location.pathname)) history.replaceState(history.state, '', watchPath());
   S.recent = [ch.id, ...S.recent.filter((id) => id !== ch.id)].slice(0, 40);
   store.set(`recent:${S.pl.id}`, S.recent);
+  account.changed();
   showBanner();
   stageMsg('');
   S.attached?.destroy();
@@ -285,7 +298,9 @@ function showBanner(autohide = true) {
 
 function hideChrome() {
   $('banner').hidden = true;
-  $('dock').hidden = true;
+  navPinned = false;
+  if (S.mode === 'tv') navFocus = -1;
+  syncNav();
   document.body.classList.remove('chrome-on');
 }
 
@@ -315,6 +330,7 @@ function openList({ groups = false, search = false } = {}) {
   closeAll();
   hideChrome();
   S.mode = 'list';
+  syncNav();
   $('list').hidden = false;
   S.pane = groups ? 'groups' : 'channels';
   $('list').classList.toggle('groups-open', groups);
@@ -346,6 +362,7 @@ function renderGroups() {
 
 function pickGroup(i) {
   S.group = S.groups[i].name;
+  history.replaceState(history.state, '', listPath());
   S.groupFocus = i;
   S.query = '';
   setView();
@@ -364,6 +381,7 @@ function renderHead(search = false) {
     const q = $('q');
     q.oninput = () => {
       S.query = q.value.trim();
+      history.replaceState(history.state, '', S.query ? `/search?q=${encodeURIComponent(S.query)}` : '/search');
       setView();
       S.focus = 0;
       renderChannels(true);
@@ -421,7 +439,7 @@ $('channels').addEventListener('click', (e) => {
   S.focus = i;
   S.pane = 'channels';
   const ch = S.view[i];
-  if (ch.id === S.playing?.id && !S.catchup) closeAll();
+  if (ch.id === S.playing?.id && !S.catchup) back();
   else play(ch);
 });
 let pressTimer = 0;
@@ -447,6 +465,7 @@ async function toggleFav(ch) {
   if (!ch) return;
   S.favs.has(ch.id) ? S.favs.delete(ch.id) : S.favs.add(ch.id);
   await store.set(`fav:${S.pl.id}`, [...S.favs]);
+  account.changed();
   S.groups[0].count = S.favs.size;
   if (S.mode === 'list') {
     if (S.group === FAV) setView();
@@ -464,6 +483,7 @@ function openGuide() {
   closeAll();
   hideChrome();
   S.mode = 'guide';
+  syncNav();
   $('guide').hidden = false;
   if (!S.view.length) setView();
   G.row = Math.max(0, S.view.indexOf(S.playing));
@@ -572,7 +592,7 @@ function guideOk() {
     if (url) return play(ch, { url, programme: p });
   }
   if (p && p.start > Date.now()) return; // the future cannot be watched yet
-  if (ch.id === S.playing?.id && !S.catchup) return closeAll();
+  if (ch.id === S.playing?.id && !S.catchup) return back();
   play(ch);
 }
 
@@ -602,6 +622,8 @@ $('guide-grid').addEventListener(
 function openSetup(first = true) {
   closeAll();
   S.mode = 'sheet';
+  $('sheet').dataset.screen = 'settings';
+  syncNav();
   const sheet = $('sheet');
   sheet.hidden = false;
   sheet.innerHTML = `<div class="card">
@@ -631,7 +653,7 @@ function openSetup(first = true) {
       for (const p of sheet.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== tab;
     };
   });
-  $('f-cancel')?.addEventListener('click', () => openSettings());
+  $('f-cancel')?.addEventListener('click', () => back());
   $('addf').onsubmit = async (e) => {
     e.preventDefault();
     const err = $('f-err');
@@ -665,12 +687,13 @@ function openSetup(first = true) {
       if (source.type === 'text') await loadLocalFile(pl);
       else await loadFresh(pl);
       S.playlists.push(pl);
+      account.changed();
       await store.set(
         'playlists',
         S.playlists.filter((p) => p.source.type !== 'saved'),
       );
-      closeAll();
       await usePlaylist(pl);
+      go(watchPath(), { replace: true });
     } catch (ex) {
       err.textContent = ex.message;
       btn.disabled = false;
@@ -692,6 +715,8 @@ async function loadLocalFile(pl) {
 function openSettings() {
   closeAll();
   S.mode = 'sheet';
+  $('sheet').dataset.screen = 'settings';
+  syncNav();
   const sheet = $('sheet');
   sheet.hidden = false;
   const rows = S.playlists
@@ -713,15 +738,15 @@ function openSettings() {
     <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · F favorite · 0–9 channel number · ⌫ last channel · / search · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
-  $('s-add').onclick = () => openSetup(false);
-  $('s-close').onclick = () => closeAll();
+  $('s-add').onclick = () => go('/settings/add');
+  $('s-close').onclick = () => back();
   $('s-copy')?.addEventListener('click', () => navigator.clipboard?.writeText(S.playing.url));
   sheet.querySelectorAll('.pl .btn').forEach((b) => {
     b.onclick = async () => {
       const pl = S.playlists.find((p) => p.id === b.closest('.pl').dataset.id);
       if (b.dataset.a === 'use') {
-        closeAll();
         await usePlaylist(pl);
+        go(watchPath(), { replace: true });
       } else if (b.dataset.a === 'refresh') {
         b.textContent = '…';
         try {
@@ -734,6 +759,8 @@ function openSettings() {
         }
       } else if (b.dataset.a === 'remove' && confirm(`Remove ${pl.name}?`)) {
         S.playlists = S.playlists.filter((p) => p !== pl);
+        store.prefs.write('deletedPlaylists', [...new Set([...store.prefs.read('deletedPlaylists', []), pl.id])]);
+        account.changed();
         await store.set(
           'playlists',
           S.playlists.filter((p) => p.source.type !== 'saved'),
@@ -752,6 +779,357 @@ function openSettings() {
   });
 }
 
+/* ------------------------------------------------------------- account */
+
+function sheet(screen, html) {
+  closeAll();
+  S.mode = 'sheet';
+  const sh = $('sheet');
+  sh.dataset.screen = screen;
+  sh.hidden = false;
+  sh.innerHTML = `<div class="card">${html}</div>`;
+  syncNav();
+  setTimeout(() => sh.querySelector('input')?.focus(), 50);
+  return sh;
+}
+
+const busy = async (btn, label, fn) => {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  try {
+    return await fn();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+};
+
+/** Sign in, create an account, or (signed in) the account itself. `after` runs after sign-in. */
+function openAccount({ tab = 'in', after = null, note = '' } = {}) {
+  const u = account.current();
+  if (u) {
+    const sh = sheet(
+      'account',
+      `<h1><img src="/icon.svg" alt="">${esc(u.username || 'Account')}</h1>
+      <p class="sub">${esc(u.email)}</p>
+      <p class="sub">Your playlists, favorites and recent channels follow you to every device you sign in on, including <code>hdtilt tui</code> after <code>hdtilt login</code>.</p>
+      <div class="actions"><button class="btn primary" id="a-sync">Sync now</button><button class="btn" id="a-out">Sign out</button><button class="btn" id="a-close">Close</button></div>
+      <div class="err" id="a-err"></div>`,
+    );
+    sh.querySelector('#a-sync').onclick = (e) =>
+      busy(e.target, 'Syncing…', () => account.syncNow())
+        .then(() => toast('Synced'))
+        .catch((x) => ($('a-err').textContent = x.message));
+    sh.querySelector('#a-out').onclick = async () => {
+      await account.signOut();
+      toast('Signed out');
+      go(watchPath(), { replace: true });
+    };
+    sh.querySelector('#a-close').onclick = () => back();
+    return;
+  }
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">${tab === 'up' ? 'Create account' : 'Sign in'}</h1>
+    <p class="sub">${note || 'An account keeps your playlists and favorites on every screen you watch on.'}</p>
+    <div class="tabs"><button class="${tab === 'in' ? 'on' : ''}" data-tab="in">Sign in</button><button class="${tab === 'up' ? 'on' : ''}" data-tab="up">Create account</button></div>
+    <form id="af">
+      ${
+        tab === 'up'
+          ? `<label for="a-user">Username</label><input class="field" id="a-user" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+             <label for="a-mail">Email</label><input class="field" id="a-mail" type="email" autocomplete="email" required>
+             <label for="a-pass">Password (8 or more characters)</label><input class="field" id="a-pass" type="password" autocomplete="new-password" minlength="8" required>`
+          : `<label for="a-login">Username or email</label><input class="field" id="a-login" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+             <label for="a-pass">Password</label><input class="field" id="a-pass" type="password" autocomplete="current-password" required>`
+      }
+      <div class="err" id="a-err"></div>
+      <div class="actions"><button class="btn primary" type="submit">${tab === 'up' ? 'Create account' : 'Sign in'}</button><button class="btn" type="button" id="a-cancel">Cancel</button></div>
+    </form>
+    ${tab === 'in' ? '<p class="note"><button class="linkbtn" id="a-forgot">Forgot your password?</button></p>' : '<p class="note">We email you a link to confirm the address before you can sign in.</p>'}`,
+  );
+  for (const b of sh.querySelectorAll('[data-tab]'))
+    b.onclick = () => {
+      history.replaceState(history.state, '', b.dataset.tab === 'up' ? '/account/signup' : '/account');
+      openAccount({ tab: b.dataset.tab, after, note });
+    };
+  sh.querySelector('#a-cancel').onclick = () => back();
+  sh.querySelector('#a-forgot')?.addEventListener('click', () => go('/account/forgot'));
+  sh.querySelector('#af').onsubmit = async (e) => {
+    e.preventDefault();
+    const err = $('a-err');
+    err.textContent = '';
+    const btn = e.submitter || sh.querySelector('.primary');
+    try {
+      if (tab === 'up') {
+        const email = $('a-mail').value.trim();
+        await busy(btn, 'Creating…', () => account.register($('a-user').value.trim(), email, $('a-pass').value));
+        return openCheckEmail(email);
+      }
+      await busy(btn, 'Signing in…', () => account.signIn($('a-login').value.trim(), $('a-pass').value));
+      toast(`Signed in as ${account.current().username || account.current().email}`);
+      await account.syncNow().catch(() => {});
+      if (after) return after();
+      if (!S.pl && S.playlists[0]) await usePlaylist(S.playlists[0]);
+      go(S.pl ? watchPath() : '/settings/add', { replace: true });
+    } catch (x) {
+      err.innerHTML = esc(x.message);
+      if (x.code === 'unverified') {
+        const login = $('a-login').value.trim();
+        if (login.includes('@')) {
+          err.insertAdjacentHTML('beforeend', ' <button class="linkbtn" id="a-resend">Send the link again</button>');
+          $('a-resend').onclick = () => account.resend(login).then(() => toast('Sent. Check your inbox.'));
+        }
+      }
+    }
+  };
+}
+
+function openCheckEmail(email) {
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">Check your email</h1>
+    <p class="sub">We sent a link to <strong>${esc(email)}</strong>. Open it to confirm the address and you're signed in. It works for 24 hours.</p>
+    <div class="actions"><button class="btn primary" id="c-in">I've confirmed it: sign in</button><button class="btn" id="c-again">Send it again</button></div>`,
+  );
+  sh.querySelector('#c-in').onclick = () => openAccount({ tab: 'in' });
+  sh.querySelector('#c-again').onclick = (e) =>
+    busy(e.target, 'Sending…', () => account.resend(email)).then(() => toast('Sent again'));
+}
+
+function openForgot() {
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">Forgot password</h1>
+    <p class="sub">Enter your account's email and we'll send a link to choose a new password.</p>
+    <form id="ff"><label for="f-mail">Email</label><input class="field" id="f-mail" type="email" autocomplete="email" required>
+    <div class="err" id="f-err"></div>
+    <div class="actions"><button class="btn primary" type="submit">Send link</button><button class="btn" type="button" id="f-back">Back</button></div></form>`,
+  );
+  sh.querySelector('#f-back').onclick = () => back();
+  sh.querySelector('#ff').onsubmit = async (e) => {
+    e.preventDefault();
+    await busy(e.submitter, 'Sending…', () => account.forgot($('f-mail').value.trim())).catch(() => {});
+    sheet(
+      'account',
+      `<h1><img src="/icon.svg" alt="">Check your email</h1><p class="sub">If that address has an hdtilt account, a reset link is on its way.</p><div class="actions"><button class="btn primary" id="f-ok">OK</button></div>`,
+    ).querySelector('#f-ok').onclick = () => openAccount();
+  };
+}
+
+function openReset(token) {
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">Choose a new password</h1>
+    <form id="rf"><label for="r-pass">New password (8 or more characters)</label><input class="field" id="r-pass" type="password" autocomplete="new-password" minlength="8" required>
+    <div class="err" id="r-err"></div>
+    <div class="actions"><button class="btn primary" type="submit">Save password</button></div></form>`,
+  );
+  sh.querySelector('#rf').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await busy(e.submitter, 'Saving…', () => account.reset(token, $('r-pass').value));
+      openAccount({ note: 'Password changed. Sign in with the new one.' });
+    } catch (x) {
+      $('r-err').textContent = x.message;
+    }
+  };
+}
+
+/** The consent screen the CLI and TUI open: "let hdtilt CLI use your account?" */
+async function openConsent(query) {
+  if (!account.current()) {
+    return openAccount({
+      note: 'Sign in to connect the hdtilt CLI and TUI to your account.',
+      after: () => openConsent(query),
+    });
+  }
+  let info;
+  try {
+    info = await account.authorize(query);
+  } catch (x) {
+    return sheet('account', `<h1>Can't connect</h1><p class="sub">${esc(x.message)}</p>`);
+  }
+  const u = account.current();
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">Connect ${esc(info.clientName)}?</h1>
+    <p class="sub">It will be able to read and change your hdtilt playlists and favorites as <strong>${esc(u.username || u.email)}</strong>. You can sign it out any time with <code>hdtilt logout</code>.</p>
+    <div class="actions"><button class="btn primary" id="o-yes">Allow</button><button class="btn" id="o-no">Deny</button></div>`,
+  );
+  const go = (decision) => account.authorize(query, decision).then((r) => location.assign(r.redirect));
+  sh.querySelector('#o-yes').onclick = () => go('approve');
+  sh.querySelector('#o-no').onclick = () => go('deny');
+}
+
+/** Pages reached from outside: email links, and the OAuth hops. True when one was handled. */
+async function handleRoute() {
+  const { pathname, search } = location;
+  const q = Object.fromEntries(new URLSearchParams(search));
+  const home = () => history.replaceState({ depth: 0 }, '', '/account');
+  if (pathname === '/verify' && q.token) {
+    home();
+    try {
+      const u = await account.verify(q.token);
+      toast(`Email confirmed. Signed in as ${u.username || u.email}`);
+      await account.syncNow().catch(() => {});
+      if (!S.pl && S.playlists[0]) await usePlaylist(S.playlists[0]);
+      history.replaceState({ depth: 0 }, '', S.pl ? watchPath() : '/settings/add');
+      if (!S.pl) openSetup();
+    } catch (x) {
+      openAccount({
+        note: `That link didn't work (${esc(x.message)}). Sign in, or create the account again to get a new one.`,
+      });
+    }
+    return true;
+  }
+  if (pathname === '/reset' && q.token) {
+    home();
+    openReset(q.token);
+    return true;
+  }
+  if (pathname === '/oauth/authorize') {
+    home();
+    await openConsent(q);
+    return true;
+  }
+  if (pathname === '/oauth/cli') {
+    home();
+    sheet(
+      'account',
+      q.code
+        ? `<h1><img src="/icon.svg" alt="">Paste this into your terminal</h1><p class="sub">hdtilt is waiting for this code to finish signing in.</p><div class="code">${esc(q.code)}</div>`
+        : `<h1>Sign-in cancelled</h1><p class="sub">${esc(q.error || 'Nothing to paste.')}</p>`,
+    );
+    return true;
+  }
+  return false;
+}
+
+/** Everything that syncs, gathered from this device. */
+async function collectLibrary() {
+  const playlists = S.playlists.filter((p) => p.source.type !== 'saved' && p.source.type !== 'text');
+  const favorites = {};
+  const recent = {};
+  for (const p of playlists) {
+    favorites[p.id] = p.id === S.pl?.id ? [...S.favs] : await store.get(`fav:${p.id}`, []);
+    recent[p.id] = p.id === S.pl?.id ? S.recent : await store.get(`recent:${p.id}`, []);
+  }
+  return {
+    playlists: playlists.map(({ id, name, source }) => ({ id, name, source })),
+    favorites,
+    recent,
+    deleted: store.prefs.read('deletedPlaylists', []),
+  };
+}
+
+/** Fold the account's copy into this device. */
+async function mergeLibrary(remote) {
+  const merged = account.mergeLibraries(await collectLibrary(), remote);
+  store.prefs.write('deletedPlaylists', merged.deleted);
+  const local = S.playlists.filter((p) => p.source.type === 'saved' || p.source.type === 'text');
+  S.playlists = [...merged.playlists, ...local];
+  await store.set(
+    'playlists',
+    S.playlists.filter((p) => p.source.type !== 'saved'),
+  );
+  for (const [id, list] of Object.entries(merged.favorites)) await store.set(`fav:${id}`, list);
+  for (const [id, list] of Object.entries(merged.recent)) await store.set(`recent:${id}`, list);
+  if (S.pl) {
+    S.favs = new Set(merged.favorites[S.pl.id] || [...S.favs]);
+    S.recent = merged.recent[S.pl.id] || S.recent;
+    buildGroups();
+  }
+}
+
+/* ---------------------------------------------------------------- routes */
+// Every view has an address. Going somewhere pushes one, Back (browser or
+// remote) pops one, and an address opened cold renders that view.
+//
+//   /  /watch/:channel        the picture
+//   /channels[/:group]        channel list        /favorites  /recent  /search?q=
+//   /guide                    TV guide
+//   /settings  /settings/add  playlists
+//   /account  /account/signup  /account/forgot
+//   /verify  /reset  /oauth/authorize  /oauth/cli   (reached from outside)
+
+let depth = history.state?.depth || 0;
+
+const watchPath = () => (S.playing ? `/watch/${encodeURIComponent(S.playing.id)}` : '/');
+function listPath() {
+  if (S.group === FAV) return '/favorites';
+  if (S.group === RECENT) return '/recent';
+  if (S.group === ALL) return '/channels';
+  return `/channels/${encodeURIComponent(S.group)}`;
+}
+
+/** The list opens where the playing channel is: the last group if it has it, else everything. */
+function listPathForPlaying() {
+  const has =
+    S.group === FAV ? S.favs.has(S.playing?.id) : S.group === RECENT || S.group === ALL || S.group === S.playing?.group;
+  if (!has) S.group = ALL;
+  return listPath();
+}
+
+function push(path) {
+  if (location.pathname + location.search === path) return;
+  history.pushState({ depth: ++depth }, '', path);
+}
+
+function go(path, { replace = false } = {}) {
+  if (replace) history.replaceState({ depth }, '', path);
+  else push(path);
+  render(path);
+}
+
+/** Back one view; from a page opened cold, back to the picture rather than off the site. */
+function back() {
+  if ((history.state?.depth || 0) > 0) history.back();
+  else go(S.pl ? watchPath() : '/settings/add', { replace: true });
+}
+const goBack = back;
+
+addEventListener('popstate', (e) => {
+  depth = e.state?.depth || 0;
+  render(location.pathname + location.search);
+});
+
+function render(full) {
+  const u = new URL(full, location.origin);
+  const [view, arg] = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const needsPlaylist = ['watch', 'channels', 'favorites', 'recent', 'search', 'guide', undefined].includes(view);
+  if (needsPlaylist && !S.pl) return go('/settings/add', { replace: true });
+  switch (view) {
+    case undefined:
+    case 'watch':
+      closeAll();
+      if (S.playing) history.replaceState(history.state, '', watchPath());
+      return;
+    case 'channels':
+      S.group = arg && S.live.some((c) => c.group === arg) ? arg : ALL;
+      return openList();
+    case 'favorites':
+      S.group = FAV;
+      return openList();
+    case 'recent':
+      S.group = RECENT;
+      return openList();
+    case 'search':
+      S.query = u.searchParams.get('q') || '';
+      return openList({ search: true });
+    case 'guide':
+      return openGuide();
+    case 'settings':
+      return arg === 'add' ? openSetup(!S.playlists.length) : openSettings();
+    case 'account':
+      if (arg === 'signup') return openAccount({ tab: 'up' });
+      if (arg === 'forgot') return openForgot();
+      return openAccount();
+    default:
+      return go(S.pl ? watchPath() : '/', { replace: true });
+  }
+}
+
 /* --------------------------------------------------------------- chrome */
 
 function closeAll() {
@@ -760,43 +1138,111 @@ function closeAll() {
   $('guide').hidden = true;
   $('guide-info').innerHTML = '';
   $('sheet').hidden = true;
-  $('dock').hidden = true;
   S.mode = 'tv';
+  navFocus = -1;
+  syncNav();
 }
 
-function showDock() {
-  if (S.mode !== 'tv' || !S.pl) return;
-  $('dock').hidden = false;
-  showBanner();
+/* ------------------------------------------------------------ global nav */
+
+let navPinned = false; // shown over the picture until the chrome hides
+let navFocus = -1; // index of the remote-focused nav button, -1 for none
+const navButtons = () => [...$('nav').querySelectorAll('.nav-items button:not([hidden])')];
+
+/** Which nav entry the screen in front of you is. */
+function navCurrent() {
+  if (S.mode === 'guide') return 'guide';
+  if (S.mode === 'sheet') return $('sheet').dataset.screen || '';
+  if (S.mode === 'list') return S.query ? 'search' : S.group === FAV ? 'favs' : S.group === RECENT ? 'recent' : 'live';
+  return 'live';
 }
 
-$('dock').addEventListener('click', (e) => {
+function syncNav() {
+  // Over any other view, the channel banner is clutter.
+  if (S.mode !== 'tv') $('banner').hidden = true;
+  const on = S.mode !== 'tv' || navPinned || navFocus >= 0;
+  $('nav').hidden = !on;
+  document.body.classList.toggle('nav-on', on);
+  const cur = navCurrent();
+  navButtons().forEach((b, i) => {
+    b.classList.toggle('active', b.dataset.act === cur);
+    b.classList.toggle('focus', i === navFocus);
+  });
+  navButtons()[navFocus]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function showNav() {
+  if (!S.pl && S.mode === 'tv') return;
+  navPinned = true;
+  syncNav();
+  if (S.mode === 'tv') showBanner();
+}
+
+/** Hand the remote to the nav, on the entry for the current screen. */
+function focusNav() {
+  const i = navButtons().findIndex((b) => b.dataset.act === navCurrent());
+  navFocus = Math.max(0, i);
+  clearTimeout(bannerTimer);
+  syncNav();
+}
+
+function navAct(act) {
+  navFocus = -1;
+  const to = {
+    live:
+      S.mode === 'list' && ![FAV, RECENT].includes(S.group)
+        ? null
+        : `/channels${[FAV, RECENT, ALL].includes(S.group) ? '' : `/${encodeURIComponent(S.group)}`}`,
+    guide: '/guide',
+    favs: '/favorites',
+    recent: '/recent',
+    search: '/search',
+    account: '/account',
+    settings: '/settings',
+  }[act];
+  if (to) go(to);
+  else syncNav();
+}
+
+$('nav').addEventListener('click', (e) => {
   const b = e.target.closest('button');
-  if (!b) return;
-  const a = b.dataset.act;
-  if (a === 'list') openList();
-  if (a === 'guide') openGuide();
-  if (a === 'favs') {
-    S.group = FAV;
-    openList();
-  }
-  if (a === 'search') openList({ search: true });
-  if (a === 'settings') openSettings();
+  if (b) navAct(b.dataset.act);
 });
+
+function updateNavAccount() {
+  const b = $('nav-account');
+  b.hidden = !api.serverInfo.accounts;
+  const u = account.current();
+  b.textContent = u ? `● ${u.username || u.email}` : 'Sign in';
+  syncNav();
+}
+
+let toastTimer = 0;
+function toast(text) {
+  let t = document.querySelector('.toast');
+  if (!t) {
+    t = el('div', 'toast');
+    $('app').append(t);
+  }
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 4000);
+}
 
 let lastTap = 0;
 $('video').addEventListener('click', () => {
-  if (S.mode !== 'tv') return closeAll();
+  if (S.mode !== 'tv') return back();
   const now = Date.now();
   if ($('video').muted) $('video').muted = false;
   if (now - lastTap < 300) toggleFullscreen();
   lastTap = now;
-  $('dock').hidden ? showDock() : hideChrome();
+  $('nav').hidden ? showNav() : hideChrome();
 });
 let moveTimer = 0;
 addEventListener('mousemove', () => {
   if (S.mode !== 'tv' || isTv) return;
-  if ($('dock').hidden) showDock();
+  if ($('nav').hidden) showNav();
   clearTimeout(moveTimer);
   moveTimer = setTimeout(hideChrome, 3500);
 });
@@ -835,8 +1281,25 @@ function numberKey(d) {
 }
 
 addEventListener('keydown', (e) => {
+  if (navFocus >= 0 && !(e.target instanceof HTMLInputElement)) {
+    const n = navButtons().length;
+    const k = e.key;
+    if (k === 'ArrowRight') navFocus = (navFocus + 1) % n;
+    else if (k === 'ArrowLeft') navFocus = (navFocus - 1 + n) % n;
+    else if (k === 'Enter' || k === ' ') return e.preventDefault(), navAct(navButtons()[navFocus].dataset.act);
+    else if (k === 'ArrowDown' || k === 'Escape' || k === 'GoBack' || BACK_CODES.has(e.keyCode)) {
+      navFocus = -1;
+      if (S.mode === 'tv') hideChrome();
+    } else return;
+    e.preventDefault();
+    return syncNav();
+  }
   if (S.mode === 'sheet') {
-    if (e.key === 'Escape' && S.pl) closeAll();
+    if (e.key === 'ArrowUp' && !(e.target instanceof HTMLInputElement) && e.target.closest?.('.card') == null)
+      return focusNav();
+    if (e.key === 'Escape' || e.key === 'GoBack' || BACK_CODES.has(e.keyCode)) {
+      if (!(e.target instanceof HTMLInputElement) || e.key === 'Escape') goBack();
+    }
     return;
   }
   const typing = e.target instanceof HTMLInputElement;
@@ -862,24 +1325,31 @@ addEventListener('keydown', (e) => {
   if (S.mode === 'tv') {
     if (k === 'ArrowUp' || k === 'ChannelUp' || k === 'PageUp') zap(-1);
     else if (k === 'ArrowDown' || k === 'ChannelDown' || k === 'PageDown') zap(1);
-    else if (k === 'Enter' || k === ' ') openList();
-    else if (k === 'ArrowLeft') openList({ groups: true });
-    else if (k === 'ArrowRight' || k === 'i' || k === 'Info') showBanner();
-    else if (k === 'g' || k === 'Guide' || k === 'ColorF2Yellow') openGuide();
+    else if (k === 'Enter' || k === ' ') go(listPathForPlaying());
+    else if (k === 'ArrowLeft') {
+      push(listPathForPlaying());
+      openList({ groups: true });
+    } else if (k === 'ArrowRight' || k === 'i' || k === 'Info') showBanner();
+    else if (k === 'g' || k === 'Guide' || k === 'ColorF2Yellow') go('/guide');
     else if (k === 'f' || k === 'ColorF1Green') toggleFav(S.playing);
-    else if (k === '/') openList({ search: true });
-    else if (k === 's' || k === 'ContextMenu' || k === 'Settings') openSettings();
+    else if (k === '/') go('/search');
+    else if (k === 's' || k === 'Settings') go('/settings');
     else if (k === 'm' || k === 'AudioVolumeMute') $('video').muted = !$('video').muted;
     else if (/^\d$/.test(k)) numberKey(k);
     else if (k === 'Backspace' || k === 'Last') play(S.previous);
-    else if (back) $('banner').hidden && $('dock').hidden ? showDock() : hideChrome();
-    else return;
+    else if (back || k === 'ContextMenu' || k === 'Menu') {
+      // Back over the picture is the menu: the nav, ready for the remote.
+      showNav();
+      focusNav();
+    } else return;
     e.preventDefault();
     return;
   }
 
   if (S.mode === 'list') {
-    if (k === 'ArrowUp') moveFocus(-1);
+    const atTop = S.pane === 'groups' ? S.groupFocus === 0 : S.focus === 0 || !S.view.length;
+    if (k === 'ArrowUp' && atTop) focusNav();
+    else if (k === 'ArrowUp') moveFocus(-1);
     else if (k === 'ArrowDown') moveFocus(1);
     else if (k === 'PageUp' || k === 'ChannelUp') moveFocus(-8);
     else if (k === 'PageDown' || k === 'ChannelDown') moveFocus(8);
@@ -890,16 +1360,16 @@ addEventListener('keydown', (e) => {
       renderChannels();
     } else if (k === 'ArrowRight') {
       if (S.pane === 'groups') pickGroup(S.groupFocus);
-      else openGuide();
+      else go('/guide');
     } else if (k === 'Enter' || k === ' ') {
       if (S.pane === 'groups') pickGroup(S.groupFocus);
       else {
         const ch = S.view[S.focus];
-        if (ch?.id === S.playing?.id && !S.catchup) closeAll();
+        if (ch?.id === S.playing?.id && !S.catchup) goBack();
         else play(ch);
       }
     } else if (k === 'f' || k === 'ColorF1Green') toggleFav(S.view[S.focus]);
-    else if (k === 'g' || k === 'Guide') openGuide();
+    else if (k === 'g' || k === 'Guide') go('/guide');
     else if (k === '/') renderHead(true);
     else if (/^\d$/.test(k)) numberKey(k);
     else if (back) {
@@ -908,14 +1378,15 @@ addEventListener('keydown', (e) => {
         $('list').classList.remove('groups-open');
         renderGroups();
         renderChannels();
-      } else closeAll();
+      } else goBack();
     } else return;
     e.preventDefault();
     return;
   }
 
   if (S.mode === 'guide') {
-    if (k === 'ArrowUp') guideMove(-1, 0);
+    if (k === 'ArrowUp' && G.row === 0) focusNav();
+    else if (k === 'ArrowUp') guideMove(-1, 0);
     else if (k === 'ArrowDown') guideMove(1, 0);
     else if (k === 'PageUp' || k === 'ChannelUp') guideMove(-8, 0);
     else if (k === 'PageDown' || k === 'ChannelDown') guideMove(8, 0);
@@ -923,7 +1394,7 @@ addEventListener('keydown', (e) => {
     else if (k === 'ArrowRight') guideMove(0, 1);
     else if (k === 'Enter' || k === ' ') guideOk();
     else if (k === 'f') toggleFav(S.view[G.row]);
-    else if (back || k === 'g') closeAll();
+    else if (back || k === 'g') goBack();
     else return;
     e.preventDefault();
   }

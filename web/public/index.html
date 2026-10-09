@@ -37,13 +37,18 @@
     <div id="guide-grid" class="guide-grid"></div>
   </section>
 
-  <!-- Touch/mouse bar. -->
-  <nav id="dock" class="dock" hidden>
-    <button type="button" data-act="list"><span>☰</span>Channels</button>
-    <button type="button" data-act="guide"><span>▦</span>TV Guide</button>
-    <button type="button" data-act="favs"><span>★</span>Favorites</button>
-    <button type="button" data-act="search"><span>⌕</span>Search</button>
-    <button type="button" data-act="settings"><span>⚙</span>Settings</button>
+  <!-- Global nav: always there outside the picture, one press from it. -->
+  <nav id="nav" class="nav" hidden aria-label="Main">
+    <span class="brand"><img src="/icon.svg" alt="">hdtilt</span>
+    <div class="nav-items">
+      <button type="button" data-act="live">Live TV</button>
+      <button type="button" data-act="guide">TV Guide</button>
+      <button type="button" data-act="favs">★ Favorites</button>
+      <button type="button" data-act="recent">Recent</button>
+      <button type="button" data-act="search">Search</button>
+      <button type="button" data-act="account" id="nav-account">Sign in</button>
+      <button type="button" data-act="settings" aria-label="Settings">⚙ Settings</button>
+    </div>
   </nav>
 
   <!-- Setup and settings share one sheet. -->
