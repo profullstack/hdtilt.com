@@ -1,0 +1,101 @@
+{
+  "name": "hdtilt",
+  "version": "0.1.0",
+  "description": "Open-source IPTV player: M3U, Xtream Codes and XMLTV, with a TV guide. Web/PWA, desktop, CLI, TUI, MCP and API.",
+  "license": "MIT",
+  "author": "Profullstack, Inc.",
+  "homepage": "https://hdtilt.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/hdtilt.com.git"
+  },
+  "bugs": {
+    "url": "https://github.com/profullstack/hdtilt.com/issues"
+  },
+  "keywords": [
+    "iptv",
+    "m3u",
+    "xtream",
+    "xmltv",
+    "epg",
+    "tivimate",
+    "player",
+    "pwa",
+    "tui",
+    "mcp"
+  ],
+  "type": "module",
+  "bin": {
+    "hdtilt": "bin/hdtilt.js"
+  },
+  "main": "desktop/main.cjs",
+  "files": [
+    "bin",
+    "src",
+    "web/dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "bun web/build.js",
+    "dev": "bun web/build.js && node bin/hdtilt.js serve",
+    "start": "node bin/hdtilt.js serve",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "desktop": "bun web/build.js && electron .",
+    "dist:desktop": "bun web/build.js && electron-builder --publish never",
+    "prepublishOnly": "bun web/build.js"
+  },
+  "dependencies": {
+    "@profullstack/hqtui": "^0.10.3",
+    "@profullstack/player": "^0.14.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@resvg/resvg-js": "^2.6.2",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.hdtilt.desktop",
+    "productName": "hdtilt",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "desktop/**",
+      "bin/**",
+      "src/**",
+      "web/dist/**",
+      "package.json",
+      "node_modules/**"
+    ],
+    "npmRebuild": false,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "icon": "web/dist/icon-512.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.entertainment"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "trustedDependencies": [
+    "electron"
+  ]
+}

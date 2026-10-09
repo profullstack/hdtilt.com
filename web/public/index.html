@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<meta name="color-scheme" content="dark">
+<title>hdtilt — open-source IPTV player</title>
+<meta name="description" content="A free, open-source IPTV player for your own M3U or Xtream Codes playlist, with a TV guide. Runs in the browser, on the desktop and in the terminal.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <video id="video" playsinline autoplay></video>
+  <div id="stage-msg" class="stage-msg" hidden></div>
+  <div id="clock" class="clock"></div>
+  <div id="numentry" class="numentry" hidden></div>
+
+  <!-- Channel banner: shown on every channel change, then fades. -->
+  <section id="banner" class="banner" hidden aria-live="polite"></section>
+
+  <!-- Channel list: groups rail + channels. -->
+  <section id="list" class="list" hidden>
+    <nav id="groups" class="groups" aria-label="Groups"></nav>
+    <div class="channels-wrap">
+      <header id="list-head" class="list-head"></header>
+      <div id="channels" class="channels" role="listbox" tabindex="-1"></div>
+    </div>
+  </section>
+
+  <!-- TV guide. -->
+  <section id="guide" class="guide" hidden>
+    <header id="guide-info" class="guide-info"></header>
+    <div id="guide-grid" class="guide-grid"></div>
+  </section>
+
+  <!-- Touch/mouse bar. -->
+  <nav id="dock" class="dock" hidden>
+    <button type="button" data-act="list"><span>☰</span>Channels</button>
+    <button type="button" data-act="guide"><span>▦</span>TV Guide</button>
+    <button type="button" data-act="favs"><span>★</span>Favorites</button>
+    <button type="button" data-act="search"><span>⌕</span>Search</button>
+    <button type="button" data-act="settings"><span>⚙</span>Settings</button>
+  </nav>
+
+  <!-- Setup and settings share one sheet. -->
+  <section id="sheet" class="sheet" hidden></section>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
