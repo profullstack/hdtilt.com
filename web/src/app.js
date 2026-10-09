@@ -971,15 +971,19 @@ async function handleRoute() {
     home();
     try {
       const u = await account.verify(q.token);
-      toast(`Email confirmed. Signed in as ${u.username || u.email}`);
       await account.syncNow().catch(() => {});
       if (!S.pl && S.playlists[0]) await usePlaylist(S.playlists[0]);
-      history.replaceState({ depth: 0 }, '', S.pl ? watchPath() : '/settings/add');
-      if (!S.pl) openSetup();
+      history.replaceState({ depth: 0 }, '', '/account');
+      const sh = sheet(
+        'account',
+        `<h1><img src="/icon.svg" alt="">Email confirmed ✓</h1>
+        <p class="sub">You're signed in as <strong>${esc(u.username || u.email)}</strong>. Your playlists and favorites will now follow you to every screen you sign in on.</p>
+        <div class="actions"><button class="btn primary" id="v-go">${S.pl ? 'Start watching' : 'Add your playlist'}</button></div>`,
+      );
+      sh.querySelector('#v-go').onclick = () => go(S.pl ? watchPath() : '/settings/add', { replace: true });
     } catch (x) {
-      openAccount({
-        note: `That link didn't work (${esc(x.message)}). Sign in, or create the account again to get a new one.`,
-      });
+      history.replaceState({ depth: 0 }, '', '/account');
+      openAccount({ note: esc(x.message) });
     }
     return true;
   }
