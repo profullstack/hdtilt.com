@@ -1,9 +1,13 @@
 {
   "name": "hdtilt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open-source IPTV player: M3U, Xtream Codes and XMLTV, with a TV guide. Web/PWA, desktop, CLI, TUI, MCP and API.",
   "license": "MIT",
-  "author": "Profullstack, Inc.",
+  "author": {
+    "name": "Profullstack, Inc.",
+    "email": "hello@profullstack.com",
+    "url": "https://profullstack.com"
+  },
   "homepage": "https://hdtilt.com",
   "repository": {
     "type": "git",
@@ -93,6 +97,10 @@
       "target": [
         "nsis"
       ]
+    },
+    "deb": {
+      "afterInstall": "desktop/resources/after-install.sh",
+      "afterRemove": "desktop/resources/after-remove.sh"
     }
   },
   "trustedDependencies": [
