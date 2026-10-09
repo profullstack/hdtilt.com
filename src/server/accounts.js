@@ -14,6 +14,7 @@ import { AuthSystem, MemoryAdapter, PostgresAdapter } from '@profullstack/auth-s
 import { createOAuthServer, memoryStore as oauthMemoryStore } from '@profullstack/auth-system/oauth2';
 import { OAUTH2_SCHEMA, postgresStore as oauthPostgresStore } from '@profullstack/auth-system/oauth2/postgres';
 import { createEmailer } from '@profullstack/emailer';
+import jwt from 'jsonwebtoken';
 
 /** The CLI, TUI and stdio MCP sign in as this client (code + PKCE, loopback). */
 export const CLI_CLIENT_ID = 'hdtilt-cli';
@@ -301,7 +302,25 @@ export function createAccounts(opts = {}) {
       return { ok: true, sent: true };
     },
     async verify(token) {
-      const r = await auth.verifyEmail(token);
+      let r;
+      try {
+        r = await auth.verifyEmail(token);
+      } catch {
+        // A link clicked twice: say "already confirmed" rather than "broken",
+        // but only for a link we signed, so this cannot probe accounts.
+        try {
+          const p = jwt.verify(String(token), secret || 'hdtilt-dev-secret');
+          const u = p?.type === 'email_verification' && (await adapter.getUserById(p.userId));
+          if (u?.emailVerified) {
+            const err = new Error('This email is already confirmed. Sign in to continue.');
+            err.code = 'already_verified';
+            throw err;
+          }
+        } catch (inner) {
+          if (inner.code === 'already_verified') throw inner;
+        }
+        throw new Error('That link has expired or was already used. Sign in, or ask for a new one.');
+      }
       // verifyEmail hands back the user as it was before the update.
       return { user: publicUser((await adapter.getUserById(r.user.id)) || r.user), tokens: r.tokens };
     },

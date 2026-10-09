@@ -67,6 +67,22 @@ describe('sign up', () => {
     expect(body.tokens.accessToken).toBeTruthy();
   });
 
+  it('says "already confirmed" when the link is used again', async () => {
+    const link = linkIn(mail.at(-1), '/verify');
+    const r = await post('/api/auth/verify', { token: link.searchParams.get('token') });
+    expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.code).toBe('already_verified');
+    expect(body.tokens).toBeUndefined();
+  });
+
+  it('calls a forged link broken, not confirmed', async () => {
+    const r = await post('/api/auth/verify', {
+      token: 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJ4IiwidHlwZSI6ImVtYWlsX3ZlcmlmaWNhdGlvbiJ9.bad',
+    });
+    expect((await r.json()).code).toBeUndefined();
+  });
+
   it('refuses a taken username, in any case', async () => {
     const r = await post('/api/auth/register', {
       username: 'viewer_1',
