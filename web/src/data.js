@@ -1,7 +1,10 @@
 // Talking to the hdtilt server, and deciding how a stream reaches the player.
 
 import { streamKind } from '../../src/core/sources.js';
-import { proxyPath } from '../../src/core/util.js';
+import { b64urlEncode, proxyPath } from '../../src/core/util.js';
+
+/** The same test @profullstack/player uses to pick an engine. */
+export const canMse = () => typeof window.MediaSource !== 'undefined';
 
 export let serverInfo = { public: true, version: '' };
 
@@ -61,6 +64,11 @@ export function playable(url, { viaProxy = false, kind = 'live' } = {}) {
   const mixed = location.protocol === 'https:' && url.startsWith('http:');
   // Provider transport streams almost never send CORS headers, and mpegts.js
   // reads them with fetch, so they always go through the proxy.
+  // No Media Source Extensions (iPhone Safari): mpegts.js cannot run, so the
+  // server repackages the transport stream as HLS, which Safari plays natively.
+  if (k === 'mpegts' && !canMse()) {
+    return { src: `/hls/${b64urlEncode(url)}/index.m3u8`, kind: 'hls', proxied: true, remuxed: true };
+  }
   if (viaProxy || mixed || k === 'mpegts') return { src: proxyPath(url, k), kind: k, proxied: true };
   return { src: url, kind: k, proxied: false };
 }

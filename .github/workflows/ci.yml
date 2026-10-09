@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The HLS conversion tests run ffmpeg for real.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: bun install --frozen-lockfile
       - run: bun run lint
       # The server tests read the built app shell.

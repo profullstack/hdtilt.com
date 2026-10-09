@@ -2,6 +2,7 @@
 // API, MCP over HTTP, and the stream proxy. node:http so it runs unchanged
 // under Node, Bun and Electron's main process.
 
+import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
@@ -16,6 +17,7 @@ import { b64urlDecode, proxyPath } from '../core/util.js';
 import { VERSION } from '../version.js';
 import { createAccounts } from './accounts.js';
 import { handleRpc } from './mcp.js';
+import { createRemuxer, hasFfmpeg } from './remux.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const WEB_DIR = process.env.HDTILT_WEB_DIR || join(here, '../../web/dist');
@@ -54,6 +56,13 @@ export function createApp(opts = {}) {
     return res;
   };
   const ctx = { public: isPublic, fetch: guardedFetch };
+  // Set by startServer once the port is known: ffmpeg reads through our own proxy.
+  let selfPort = 0;
+  const remuxBy = new Map(); // client ip -> conversion keys it started
+  const remux =
+    opts.remux === false || !hasFfmpeg()
+      ? null
+      : createRemuxer({ inputFor: (url) => `http://127.0.0.1:${selfPort}${proxyPath(url, 'mpegts')}` });
   const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
 
   // Sign-in and sign-up are the guessable endpoints: 20 tries a minute per address.
@@ -120,9 +129,11 @@ export function createApp(opts = {}) {
       return send(res, 400, 'bad stream address');
     }
     const ip = clientIp(req);
+    // ffmpeg reading for the HLS converter: inside the box, no X-Real-IP.
+    const internal = /^(::ffff:)?127\.0\.0\.1$|^::1$/.test(req.socket.remoteAddress || '') && !req.headers['x-real-ip'];
     const short = /\.(m3u8?|png|jpe?g|gif|webp|svg|ico)$/i.test(new URL(upstream).pathname);
     // Playlists and logos are short requests; only a long-lived body counts.
-    const counted = !short;
+    const counted = !short && !internal;
     if (counted) {
       const n = streamsByIp.get(ip) || 0;
       if (n >= maxStreams) return send(res, 429, 'too many streams from this address');
@@ -173,7 +184,13 @@ export function createApp(opts = {}) {
 
   async function api(req, res, path) {
     if (path === '/api/health')
-      return send(res, 200, { ok: true, version: VERSION, public: isPublic, accounts: Boolean(accounts) });
+      return send(res, 200, {
+        ok: true,
+        version: VERSION,
+        public: isPublic,
+        accounts: Boolean(accounts),
+        hls: Boolean(remux),
+      });
 
     if (
       path.startsWith('/api/auth/') ||
@@ -303,6 +320,46 @@ export function createApp(opts = {}) {
     }
   }
 
+  /** /hls/<b64>/index.m3u8 starts or joins a conversion; /hls/s/<key>/<segment> serves it. */
+  async function hls(req, res, path) {
+    if (!remux) return send(res, 501, 'this server cannot convert transport streams (no ffmpeg)');
+    const seg = /^\/hls\/s\/([a-f0-9]{24})\/(seg\d+\.ts)$/.exec(path);
+    if (seg) {
+      const file = await remux.segment(seg[1], seg[2]);
+      if (!file) return send(res, 404, 'gone');
+      res.writeHead(200, {
+        'content-type': 'video/mp2t',
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      });
+      return createReadStream(file).pipe(res);
+    }
+    const m = /^\/hls\/([A-Za-z0-9_-]+)\/index\.m3u8$/.exec(path);
+    if (!m) return send(res, 404, 'not found');
+    let url;
+    try {
+      url = b64urlDecode(m[1]);
+      new URL(url);
+    } catch {
+      return send(res, 400, 'bad stream address');
+    }
+    try {
+      // A viewer starts at most as many conversions as streams; joining one is free.
+      const ip = clientIp(req);
+      const startedBy = (remuxBy.get(ip) || []).filter((k) => remux.has(k));
+      const key0 = remux.keyOf(url);
+      if (!remux.has(key0) && startedBy.length >= maxStreams)
+        return send(res, 429, 'too many streams from this address');
+      const key = await remux.start(url);
+      if (!startedBy.includes(key)) remuxBy.set(ip, [...startedBy, key]);
+      const text = await remux.playlist(key);
+      const body = text.replace(/^(seg\d+\.ts)$/gm, `/hls/s/${key}/$1`);
+      return send(res, 200, body, { 'content-type': 'application/vnd.apple.mpegurl' });
+    } catch (e) {
+      return send(res, e.status || 502, e.message);
+    }
+  }
+
   async function mcp(req, res) {
     if (req.method === 'GET') return send(res, 405, 'POST JSON-RPC here', { allow: 'POST' });
     const body = await readJson(req);
@@ -338,7 +395,7 @@ export function createApp(opts = {}) {
     }
   }
 
-  return async function handler(req, res) {
+  const handler = async function handler(req, res) {
     const url = new URL(req.url, 'http://x');
     const path = url.pathname;
     try {
@@ -350,6 +407,7 @@ export function createApp(opts = {}) {
       }
       const pm = /^\/p\/([A-Za-z0-9_-]+)(?:\/[^/]*)?$/.exec(path);
       if (pm) return await proxy(req, res, pm[1]);
+      if (path.startsWith('/hls/')) return await hls(req, res, path);
       if (path === '/mcp') return await mcp(req, res);
       if (
         accounts &&
@@ -363,6 +421,11 @@ export function createApp(opts = {}) {
       else res.destroy();
     }
   };
+  handler.setPort = (p) => {
+    selfPort = p;
+  };
+  handler.close = () => remux?.close();
+  return handler;
 }
 
 export function startServer({
@@ -370,9 +433,14 @@ export function startServer({
   host = process.env.HOST || '127.0.0.1',
   ...opts
 } = {}) {
-  const server = createServer(createApp(opts));
+  const app = createApp(opts);
+  const server = createServer(app);
+  server.on('close', () => app.close());
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, host, () => resolve(server));
+    server.listen(port, host, () => {
+      app.setPort(server.address().port);
+      resolve(server);
+    });
   });
 }

@@ -152,17 +152,24 @@ function buildGroups() {
   }
 }
 
+/** The channels of the current group, before any filter. */
+function groupList() {
+  if (S.group === FAV) return S.live.filter((c) => S.favs.has(c.id));
+  if (S.group === RECENT) return S.recent.map((id) => S.byId.get(id)).filter(Boolean);
+  if (S.group === ALL) return S.live;
+  return S.live.filter((c) => c.group === S.group);
+}
+
+/** Name contains it, or it is the channel number. */
+function filterChannels(list, query) {
+  if (!query) return list;
+  const q = query.toLowerCase();
+  const n = /^\d+$/.test(q) ? Number(q) : null;
+  return list.filter((c) => c.name.toLowerCase().includes(q) || (n != null && c.chno === n));
+}
+
 function setView() {
-  let list;
-  if (S.group === FAV) list = S.live.filter((c) => S.favs.has(c.id));
-  else if (S.group === RECENT) list = S.recent.map((id) => S.byId.get(id)).filter(Boolean);
-  else if (S.group === ALL) list = S.live;
-  else list = S.live.filter((c) => c.group === S.group);
-  if (S.query) {
-    const q = S.query.toLowerCase();
-    const n = /^\d+$/.test(q) ? Number(q) : null;
-    list = list.filter((c) => c.name.toLowerCase().includes(q) || (n != null && c.chno === n));
-  }
+  const list = filterChannels(groupList(), S.query);
   S.view = list;
   S.focus = Math.max(
     0,
@@ -188,7 +195,7 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
   S.attached = null;
   const video = $('video');
   video.removeAttribute('src');
-  const target = api.playable(url || ch.url, { viaProxy });
+  const target = api.playable(iosUrl(url || ch.url), { viaProxy });
   const mine = {};
   S.current = mine;
   let failed = false;
@@ -228,6 +235,16 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
     onError(e.message || String(e));
   }
   if (S.mode === 'list') renderChannels();
+}
+
+/**
+ * An Xtream line that also serves HLS gives Safari on iPhone the .m3u8 of the
+ * same channel, so nothing has to be converted on the server.
+ */
+function iosUrl(url) {
+  const formats = S.data?.account?.formats || [];
+  if (api.canMse() || !formats.includes('m3u8')) return url;
+  return url.replace(/(\/live\/[^/]+\/[^/]+\/\d+)\.ts(\?|$)/, '$1.m3u8$2');
 }
 
 function zap(step) {
@@ -494,7 +511,7 @@ async function toggleFav(ch) {
 
 /* ---------------------------------------------------------------- TV guide */
 
-const G = { row: 0, top: 0, start: 0, focusT: 0 };
+const G = { row: 0, top: 0, start: 0, focusT: 0, q: '', list: [] };
 const SLOT = 30 * 60_000;
 
 function openGuide() {
@@ -503,8 +520,10 @@ function openGuide() {
   S.mode = 'guide';
   syncNav();
   $('guide').hidden = false;
-  if (!S.view.length) setView();
-  G.row = Math.max(0, S.view.indexOf(S.playing));
+  G.list = filterChannels(groupList(), G.q);
+  G.row = Math.max(0, G.list.indexOf(S.playing));
+  G.top = 0;
+  $('gq').value = G.q;
   G.start = Math.floor((Date.now() - SLOT / 2) / SLOT) * SLOT;
   G.focusT = Date.now();
   // The picture keeps playing, in the preview corner.
@@ -523,7 +542,7 @@ function guideDims() {
 }
 
 function focusedProgramme() {
-  const ch = S.view[G.row];
+  const ch = G.list[G.row];
   const list = S.epg.get(ch?.id) || [];
   const i = indexAt(list, G.focusT);
   return { ch, list, i, p: list[i] || null };
@@ -536,7 +555,7 @@ function renderGuide() {
   if (G.row < G.top) G.top = G.row;
   if (G.row >= G.top + visRows - 1) G.top = G.row - visRows + 2;
   G.top = Math.max(0, G.top);
-  const chans = S.view.slice(G.top, G.top + visRows + 1);
+  const chans = G.list.slice(G.top, G.top + visRows + 1);
   ensureEpg(chans);
 
   let times = '';
@@ -561,6 +580,10 @@ function renderGuide() {
     }
     rows += `<div class="g-row" style="top:${k * rowH}px"><div class="g-ch" data-r="${r}"><span class="no">${c.chno ?? r + 1}</span>${logo(c, 'logo')}<span class="nm">${esc(c.name)}</span></div>${cells}</div>`;
   });
+  if (!G.list.length) {
+    grid.innerHTML = `<div class="empty">No channel here matches "${esc(G.q)}".</div>`;
+    return renderGuideInfo();
+  }
   grid.innerHTML = `<div class="g-times">${times}</div>${nowX > chW ? `<div class="g-now" style="left:${nowX}px"></div>` : ''}<div class="g-rows">${rows}</div>`;
   grid.querySelector('.g-times').style.left = `${chW}px`;
   renderGuideInfo();
@@ -587,9 +610,18 @@ function renderGuideInfo() {
     ${p?.desc ? `<p>${esc(p.desc)}</p>` : ''}`;
 }
 
+$('gq').addEventListener('input', () => {
+  G.q = $('gq').value.trim();
+  G.list = filterChannels(groupList(), G.q);
+  G.row = 0;
+  G.top = 0;
+  history.replaceState(history.state, '', G.q ? `/guide?q=${encodeURIComponent(G.q)}` : '/guide');
+  renderGuide();
+});
+
 function guideMove(dr, dt) {
   const { span } = guideDims();
-  if (dr) G.row = Math.min(S.view.length - 1, Math.max(0, G.row + dr));
+  if (dr) G.row = Math.min(G.list.length - 1, Math.max(0, G.row + dr));
   if (dt) {
     const { list, i } = focusedProgramme();
     const p = list[i];
@@ -753,7 +785,7 @@ function openSettings() {
     ${acct ? `<h2>Account</h2><p class="sub">${esc(acct.status || '')}${acct.expiresAt ? ` · expires ${new Date(acct.expiresAt).toLocaleDateString()}` : ''}${acct.maxConnections ? ` · ${acct.activeConnections}/${acct.maxConnections} connections` : ''}</p>` : ''}
     ${S.playing ? `<h2>Now playing</h2><p class="sub">${esc(S.playing.name)} · <button class="btn" id="s-copy">Copy stream URL</button></p>` : ''}
     <h2>Remote and keyboard</h2>
-    <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter · M mute · Esc back</p>
+    <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter (list or guide) · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
   $('s-add').onclick = () => go('/settings/add');
@@ -1147,6 +1179,7 @@ function render(full) {
       return go(q ? `/channels?q=${encodeURIComponent(q)}` : '/channels', { replace: true });
     }
     case 'guide':
+      G.q = u.searchParams.get('q') || '';
       return openGuide();
     case 'settings':
       return arg === 'add' ? openSetup(!S.playlists.length) : openSettings();
@@ -1334,6 +1367,20 @@ addEventListener('keydown', (e) => {
   const k = e.key;
   const back = k === 'Escape' || k === 'GoBack' || k === 'BrowserBack' || (BACK_CODES.has(e.keyCode) && !typing);
 
+  if (typing && e.target.id === 'gq') {
+    if (k === 'ArrowDown' || k === 'Enter') {
+      e.target.blur();
+      e.preventDefault();
+    } else if (back) {
+      e.target.blur();
+      if (G.q) {
+        e.target.value = '';
+        e.target.dispatchEvent(new Event('input'));
+      }
+      e.preventDefault();
+    }
+    return;
+  }
   if (typing) {
     if (k === 'ArrowDown' || k === 'Enter') {
       e.target.blur();
@@ -1428,7 +1475,8 @@ addEventListener('keydown', (e) => {
     else if (k === 'ArrowLeft') guideMove(0, -1);
     else if (k === 'ArrowRight') guideMove(0, 1);
     else if (k === 'Enter' || k === ' ') guideOk();
-    else if (k === 'f') toggleFav(S.view[G.row]);
+    else if (k === 'f') toggleFav(G.list[G.row]);
+    else if (k === '/') $('gq').focus();
     else if (back || k === 'g') goBack();
     else return;
     e.preventDefault();
