@@ -103,8 +103,16 @@ const commands = {
     if (!source || (source.type === 'xtream' && !(o.user && o.pass)))
       throw new Error('need an M3U URL, or --xtream with --user and --pass');
     if (o.epg) source.epg = o.epg;
+    const existed = Boolean((await readConfig()).playlists[name]);
     await addPlaylist(name, source);
-    const pl = await channelsFor(name, { refresh: true });
+    let pl;
+    try {
+      pl = await channelsFor(name, { refresh: true });
+    } catch (e) {
+      // A list that does not load is not saved (or synced to the account).
+      if (!existed) await removePlaylist(name);
+      throw e;
+    }
     console.log(
       `Saved ${name}: ${pl.channels.length} channels in ${groupsOf(pl.channels).length} groups${pl.epgUrl ? ', guide found' : ', no guide (add one with --epg)'}`,
     );
