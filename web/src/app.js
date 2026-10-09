@@ -161,7 +161,7 @@ function setView() {
   if (S.query) {
     const q = S.query.toLowerCase();
     const n = /^\d+$/.test(q) ? Number(q) : null;
-    list = S.live.filter((c) => c.name.toLowerCase().includes(q) || (n != null && c.chno === n));
+    list = list.filter((c) => c.name.toLowerCase().includes(q) || (n != null && c.chno === n));
   }
   S.view = list;
   S.focus = Math.max(
@@ -289,12 +289,19 @@ function showBanner(autohide = true) {
       ${now && !S.catchup ? `<div class="bar"><i style="width:${(progress(now) * 100).toFixed(1)}%"></i></div>` : ''}
       ${next ? `<div class="next">Next: ${hhmm(next.start)} ${esc(next.title)}</div>` : ''}
     </div>
-    <div class="tags">${S.catchup ? '<span class="tag">CATCH-UP</span>' : '<span class="tag live">LIVE</span>'}${S.favs.has(ch.id) ? '<span class="tag fav">★</span>' : ''}</div>`;
+    <div class="tags">${S.catchup ? '<span class="tag">CATCH-UP</span>' : '<span class="tag live">LIVE</span>'}<button type="button" class="fav-btn banner-fav${S.favs.has(ch.id) ? ' on' : ''}" aria-pressed="${S.favs.has(ch.id)}">${S.favs.has(ch.id) ? '★ Favorite' : '☆ Favorite'}</button></div>`;
   b.hidden = false;
   document.body.classList.add('chrome-on');
   clearTimeout(bannerTimer);
   if (autohide) bannerTimer = setTimeout(hideChrome, 5000);
 }
+
+$('banner').addEventListener('click', (e) => {
+  if (!e.target.closest('.fav-btn')) return;
+  e.stopPropagation();
+  toggleFav(S.playing);
+  showBanner();
+});
 
 function hideChrome() {
   $('banner').hidden = true;
@@ -338,7 +345,6 @@ function openList({ groups = false, search = false } = {}) {
     0,
     S.groups.findIndex((g) => g.name === S.group),
   );
-  if (!search) S.query = '';
   setView();
   renderGroups();
   renderHead(search);
@@ -374,29 +380,34 @@ function pickGroup(i) {
   renderChannels(true);
 }
 
-function renderHead(search = false) {
+function renderHead(focusFilter = false) {
   const h = $('list-head');
-  if (search || S.query) {
-    h.innerHTML = `<input id="q" placeholder="Search channels or type a number" value="${esc(S.query)}" autocomplete="off" spellcheck="false">`;
-    const q = $('q');
-    q.oninput = () => {
-      S.query = q.value.trim();
-      history.replaceState(history.state, '', S.query ? `/search?q=${encodeURIComponent(S.query)}` : '/search');
-      setView();
-      S.focus = 0;
-      renderChannels(true);
-    };
-    if (search) q.focus();
-  } else {
-    h.innerHTML = `<h2>${esc(S.group)}</h2><span class="hint">${S.view.length} · ◀ groups</span>`;
-  }
+  h.innerHTML = `<h2>${esc(S.group)}</h2>
+    <input id="q" class="filter" type="search" placeholder="Filter by name or number" value="${esc(S.query)}" autocomplete="off" spellcheck="false" aria-label="Filter channels">
+    <span class="hint" id="list-count"></span>`;
+  updateCount();
+  const q = $('q');
+  q.oninput = () => {
+    S.query = q.value.trim();
+    history.replaceState(history.state, '', listPath());
+    setView();
+    S.focus = 0;
+    updateCount();
+    renderChannels(true);
+  };
+  if (focusFilter) q.focus();
+}
+
+function updateCount() {
+  const c = $('list-count');
+  if (c) c.textContent = `${S.view.length} · ☆ or F favorites · ◀ groups`;
 }
 
 function renderChannels(scrollToFocus = false) {
   const box = $('channels');
   const rp = rowPx();
   if (!S.view.length) {
-    box.innerHTML = `<div class="empty">${S.group === FAV && !S.query ? 'No favorites yet. Press F (or long-press) on a channel to add it.' : 'Nothing here.'}</div>`;
+    box.innerHTML = `<div class="empty">${S.group === FAV && !S.query ? 'No favorites yet. Tap ☆ on any channel, or press F while it is selected or playing.' : S.query ? `No channel here matches "${esc(S.query)}".` : 'Nothing here.'}</div>`;
     return;
   }
   let spacer = box.querySelector('.spacer');
@@ -422,9 +433,10 @@ function renderChannels(scrollToFocus = false) {
     const cls = `row${i === S.focus && S.pane === 'channels' ? ' focus' : ''}${c.id === S.playing?.id ? ' playing' : ''}`;
     rows.push(`<div class="${cls}" data-i="${i}" style="top:${i * rp + 4}px" role="option">
       <span class="no">${c.chno ?? i + 1}</span>${logo(c, 'logo')}
-      <span class="meta"><div class="nm">${esc(c.name)}${S.favs.has(c.id) ? '<span class="star">★</span>' : ''}</div>
+      <span class="meta"><div class="nm">${esc(c.name)}</div>
       <div class="pg">${now ? `${esc(now.title)}` : S.data?.epgUrl ? '&nbsp;' : esc(c.group)}</div>
-      ${now ? `<div class="bar"><i style="width:${(progress(now) * 100).toFixed(1)}%"></i></div>` : ''}</span></div>`);
+      ${now ? `<div class="bar"><i style="width:${(progress(now) * 100).toFixed(1)}%"></i></div>` : ''}</span>
+      <button type="button" class="fav-btn${S.favs.has(c.id) ? ' on' : ''}" data-fav="${i}" tabindex="-1" aria-pressed="${S.favs.has(c.id)}" aria-label="${S.favs.has(c.id) ? 'Remove from' : 'Add to'} favorites">${S.favs.has(c.id) ? '★' : '☆'}</button></div>`);
   }
   for (const r of box.querySelectorAll('.row')) r.remove();
   spacer.insertAdjacentHTML('afterend', rows.join(''));
@@ -433,6 +445,11 @@ function renderChannels(scrollToFocus = false) {
 
 $('channels').addEventListener('scroll', () => S.mode === 'list' && renderChannels());
 $('channels').addEventListener('click', (e) => {
+  const star = e.target.closest('.fav-btn');
+  if (star) {
+    e.stopPropagation();
+    return toggleFav(S.view[Number(star.dataset.fav)]);
+  }
   const r = e.target.closest('.row');
   if (!r) return;
   const i = Number(r.dataset.i);
@@ -470,6 +487,7 @@ async function toggleFav(ch) {
   if (S.mode === 'list') {
     if (S.group === FAV) setView();
     renderGroups();
+    updateCount();
     renderChannels();
   } else showBanner();
 }
@@ -735,7 +753,7 @@ function openSettings() {
     ${acct ? `<h2>Account</h2><p class="sub">${esc(acct.status || '')}${acct.expiresAt ? ` · expires ${new Date(acct.expiresAt).toLocaleDateString()}` : ''}${acct.maxConnections ? ` · ${acct.activeConnections}/${acct.maxConnections} connections` : ''}</p>` : ''}
     ${S.playing ? `<h2>Now playing</h2><p class="sub">${esc(S.playing.name)} · <button class="btn" id="s-copy">Copy stream URL</button></p>` : ''}
     <h2>Remote and keyboard</h2>
-    <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · F favorite · 0–9 channel number · ⌫ last channel · / search · M mute · Esc back</p>
+    <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
   $('s-add').onclick = () => go('/settings/add');
@@ -1051,7 +1069,7 @@ async function mergeLibrary(remote) {
 // remote) pops one, and an address opened cold renders that view.
 //
 //   /  /watch/:channel        the picture
-//   /channels[/:group]        channel list        /favorites  /recent  /search?q=
+//   /channels[/:group][?q=]   channel list, filtered  /favorites  /recent  (/search redirects)
 //   /guide                    TV guide
 //   /settings  /settings/add  playlists
 //   /account  /account/signup  /account/forgot
@@ -1061,10 +1079,11 @@ let depth = history.state?.depth || 0;
 
 const watchPath = () => (S.playing ? `/watch/${encodeURIComponent(S.playing.id)}` : '/');
 function listPath() {
-  if (S.group === FAV) return '/favorites';
-  if (S.group === RECENT) return '/recent';
-  if (S.group === ALL) return '/channels';
-  return `/channels/${encodeURIComponent(S.group)}`;
+  const q = S.query ? `?q=${encodeURIComponent(S.query)}` : '';
+  if (S.group === FAV) return `/favorites${q}`;
+  if (S.group === RECENT) return `/recent${q}`;
+  if (S.group === ALL) return `/channels${q}`;
+  return `/channels/${encodeURIComponent(S.group)}${q}`;
 }
 
 /** The list opens where the playing channel is: the last group if it has it, else everything. */
@@ -1072,6 +1091,7 @@ function listPathForPlaying() {
   const has =
     S.group === FAV ? S.favs.has(S.playing?.id) : S.group === RECENT || S.group === ALL || S.group === S.playing?.group;
   if (!has) S.group = ALL;
+  S.query = '';
   return listPath();
 }
 
@@ -1111,16 +1131,21 @@ function render(full) {
       return;
     case 'channels':
       S.group = arg && S.live.some((c) => c.group === arg) ? arg : ALL;
+      S.query = u.searchParams.get('q') || '';
       return openList();
     case 'favorites':
       S.group = FAV;
+      S.query = u.searchParams.get('q') || '';
       return openList();
     case 'recent':
       S.group = RECENT;
-      return openList();
-    case 'search':
       S.query = u.searchParams.get('q') || '';
-      return openList({ search: true });
+      return openList();
+    case 'search': {
+      // Search became the filter on Live TV; old links still land there.
+      const q = u.searchParams.get('q');
+      return go(q ? `/channels?q=${encodeURIComponent(q)}` : '/channels', { replace: true });
+    }
     case 'guide':
       return openGuide();
     case 'settings':
@@ -1157,7 +1182,7 @@ const navButtons = () => [...$('nav').querySelectorAll('.nav-items button:not([h
 function navCurrent() {
   if (S.mode === 'guide') return 'guide';
   if (S.mode === 'sheet') return $('sheet').dataset.screen || '';
-  if (S.mode === 'list') return S.query ? 'search' : S.group === FAV ? 'favs' : S.group === RECENT ? 'recent' : 'live';
+  if (S.mode === 'list') return S.group === FAV ? 'favs' : S.group === RECENT ? 'recent' : 'live';
   return 'live';
 }
 
@@ -1200,7 +1225,6 @@ function navAct(act) {
     guide: '/guide',
     favs: '/favorites',
     recent: '/recent',
-    search: '/search',
     account: '/account',
     settings: '/settings',
   }[act];
@@ -1317,11 +1341,16 @@ addEventListener('keydown', (e) => {
       renderChannels(true);
       e.preventDefault();
     } else if (back) {
-      S.query = '';
+      // Esc in the filter clears it; a second Esc leaves the list.
       e.target.blur();
-      setView();
-      renderHead();
-      renderChannels(true);
+      if (S.query) {
+        S.query = '';
+        e.target.value = '';
+        history.replaceState(history.state, '', listPath());
+        setView();
+        updateCount();
+        renderChannels(true);
+      }
     }
     return;
   }
@@ -1336,8 +1365,10 @@ addEventListener('keydown', (e) => {
     } else if (k === 'ArrowRight' || k === 'i' || k === 'Info') showBanner();
     else if (k === 'g' || k === 'Guide' || k === 'ColorF2Yellow') go('/guide');
     else if (k === 'f' || k === 'ColorF1Green') toggleFav(S.playing);
-    else if (k === '/') go('/search');
-    else if (k === 's' || k === 'Settings') go('/settings');
+    else if (k === '/') {
+      go(listPathForPlaying());
+      $('q')?.focus();
+    } else if (k === 's' || k === 'Settings') go('/settings');
     else if (k === 'm' || k === 'AudioVolumeMute') $('video').muted = !$('video').muted;
     else if (/^\d$/.test(k)) numberKey(k);
     else if (k === 'Backspace' || k === 'Last') play(S.previous);
@@ -1374,7 +1405,7 @@ addEventListener('keydown', (e) => {
       }
     } else if (k === 'f' || k === 'ColorF1Green') toggleFav(S.view[S.focus]);
     else if (k === 'g' || k === 'Guide') go('/guide');
-    else if (k === '/') renderHead(true);
+    else if (k === '/') $('q')?.focus();
     else if (/^\d$/.test(k)) numberKey(k);
     else if (back) {
       if (S.pane === 'groups') {

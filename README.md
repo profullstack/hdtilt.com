@@ -12,8 +12,9 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 - **TV guide:** XMLTV (plain or `.gz`), taken from the playlist's `url-tvg` or given by hand. Channels are matched by `tvg-id`, then by name. Shows what's on now and next, with progress bars and a full guide grid.
 - **Catch-up:** Xtream timeshift, plus the M3U `catchup` / `catchup-source` / `tvg-rec` forms (`default`, `append`, `shift`, `flussonic`).
 - **Playback** through [`@profullstack/player`](https://github.com/profullstack/player): HLS (hls.js), MPEG-TS (mpegts.js) and MP4. It restarts stalled live streams and explains codec failures.
-- **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/search?q=`, `/guide`, `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
-- **A global nav** with Live TV, TV Guide, ★ Favorites, Recent, Search, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
+- **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/guide` (lists take `?q=` to filter), `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
+- **A global nav** with Live TV (with a filter box), TV Guide, ★ Favorites, Recent, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
+- **Favorites:** tap ☆ on any channel row or on the channel banner, or press F. They sit under ★ Favorites in the nav and sync with your account.
 - **The TiviMate basics:** ↑/↓ zaps channels, OK opens the list, ◀ opens groups, digits jump to a channel number, Back returns to the last channel. Favorites, recents and search are built in. Works with a mouse, touch, a keyboard or a TV remote (Fire TV, Android TV, webOS, Tizen keys).
 
 ## Accounts
