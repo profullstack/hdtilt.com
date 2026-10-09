@@ -14,6 +14,7 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 - **Playback** through [`@profullstack/player`](https://github.com/profullstack/player): HLS (hls.js), MPEG-TS (mpegts.js) and MP4. It restarts stalled live streams and explains codec failures.
 - **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/guide` (lists take `?q=` to filter), `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
 - **A global nav** with Live TV (with a filter box), TV Guide, ★ Favorites, Recent, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
+- **iPhone and iPad Safari:** they have no Media Source Extensions, so they cannot play an MPEG-TS stream directly. hdtilt asks an Xtream line for its HLS version when it offers one, and otherwise the server repackages the stream as HLS (`ffmpeg -c copy`, no transcoding, shared by everyone watching that channel). Self-hosters need `ffmpeg` on the PATH, or `HDTILT_FFMPEG`.
 - **Favorites:** tap ☆ on any channel row or on the channel banner, or press F. They sit under ★ Favorites in the nav and sync with your account.
 - **The TiviMate basics:** ↑/↓ zaps channels, OK opens the list, ◀ opens groups, digits jump to a channel number, Back returns to the last channel. Favorites, recents and search are built in. Works with a mouse, touch, a keyboard or a TV remote (Fire TV, Android TV, webOS, Tizen keys).
 
@@ -97,6 +98,7 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 | GET | `/api/me` | the signed-in account (`Authorization: Bearer`, a session or an OAuth token) |
 | GET / PUT | `/api/library` | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first |
 | GET | `/.well-known/oauth-authorization-server` | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli` |
+| GET | `/hls/<base64url>/index.m3u8` | an MPEG-TS stream repackaged as HLS (for browsers without MSE) |
 | GET | `/p/<base64url>/<name.ext>` | stream proxy; HLS playlists are rewritten so segments and keys come back through it |
 | POST | `/mcp` | MCP JSON-RPC |
 

@@ -8,6 +8,8 @@ COPY . .
 RUN bun web/build.js
 
 FROM oven/bun:1-alpine
+# ffmpeg repackages transport streams as HLS for iPhone Safari (no MSE there).
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production HDTILT_PUBLIC=1 HOST=0.0.0.0 PORT=3000
 COPY --chown=bun:bun package.json bun.lock ./

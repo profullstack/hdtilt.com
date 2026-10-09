@@ -865,3 +865,27 @@ label {
     grid-template-columns: 2.2rem 3.4rem 1fr auto;
   }
 }
+
+/* ---- guide filter ---------------------------------------------------------- */
+.guide {
+  grid-template-rows: auto auto 1fr;
+}
+.guide-bar {
+  padding: 0 1.8rem 0.7rem;
+}
+.guide-bar .filter {
+  width: min(100%, 28rem);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+  outline: none;
+}
+.guide-bar .filter:focus {
+  border-color: var(--accent);
+}
+@media (max-width: 700px) {
+  .guide-bar {
+    padding: 0 16px 0.6rem;
+  }
+}
