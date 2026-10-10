@@ -66,13 +66,10 @@
   <!-- Setup and settings share one sheet. -->
   <section id="sheet" class="sheet" hidden></section>
 
-  <!-- Profullstack webring: shown under the setup/settings sheet, never over the picture. -->
-  <nav class="webring" aria-label="Profullstack webring">
-    <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Fhdtilt.com%2F" rel="prev" title="Previous site">&lt;&lt;</a>
-    <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>
-    <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Fhdtilt.com%2F" rel="next" title="Next site">&gt;&gt;</a>
-    <a href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Fhdtilt.com%2F" title="Random site" aria-label="Random site">&#x2684;</a>
-  </nav>
+  <!-- @profullstack/footer (copyright + Profullstack webring), shown under the
+       setup/settings sheet, never over the picture. The server renders it between
+       the markers from the current @latest template on every page load. -->
+  <div class="ring-dock"><!--pfs-footer--><!--/pfs-footer--></div>
 </div>
 <script type="module" src="/app.js"></script>
 </body>

@@ -1085,25 +1085,23 @@ body.gated .nav-items button:not(#nav-account) {
   min-width: 0;
 }
 
-/* Profullstack webring: only while the sheet is up. */
-.webring {
+/* @profullstack/footer: only while the sheet is up, docked under it. */
+.ring-dock {
   display: none;
 }
-#sheet:not([hidden]) ~ .webring {
+#sheet:not([hidden]) {
+  padding-bottom: 6rem;
+}
+#sheet:not([hidden]) ~ .ring-dock {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0.6rem;
+  bottom: 0;
   z-index: 11;
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  font-size: 13px;
-}
-.webring a {
-  color: var(--dim);
-  text-decoration: none;
-}
-.webring a:hover {
+  display: block;
   color: var(--text);
+}
+.ring-dock .pfs-footer {
+  --pfs-footer-muted: var(--dim);
+  border-top: 0;
 }
