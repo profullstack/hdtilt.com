@@ -106,7 +106,7 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 
 ## Privacy and the proxy
 
-On hdtilt.com, playlists and logins are kept **in your browser** (IndexedDB) and sent to the server only to load the list. Nothing is stored there. Browsers can't play `http://` streams on an `https://` page, and most provider streams don't send CORS headers, so those streams pass through hdtilt.com's proxy. The public proxy refuses private and internal addresses and limits each client to 3 concurrent streams.
+On hdtilt.com, playlists and logins are kept **in your browser** (IndexedDB) and sent to the server only to load the list. Nothing is stored there. Browsers can't play `http://` streams on an `https://` page, and most provider streams don't send CORS headers, so those streams pass through hdtilt.com's proxy. The public proxy only serves signed-in viewers (an HttpOnly media cookie set at sign-in, since a video element cannot send a token), refuses private and internal addresses, and limits each viewer to 3 concurrent streams.
 
 If you'd rather nothing sat in between, use the desktop app or `hdtilt serve`. Both run the same server on your own machine, where the proxy can also reach tuners on your LAN.
 

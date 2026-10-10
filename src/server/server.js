@@ -2,6 +2,7 @@
 // API, MCP over HTTP, and the stream proxy. node:http so it runs unchanged
 // under Node, Bun and Electron's main process.
 
+import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -60,10 +61,15 @@ export function createApp(opts = {}) {
   // Set by startServer once the port is known: ffmpeg reads through our own proxy.
   let selfPort = 0;
   const remuxBy = new Map(); // client ip -> conversion keys it started
+  // Proves a proxy request is ffmpeg's own read, not a viewer's. Per process.
+  const internalKey = randomBytes(16).toString('hex');
   const remux =
     opts.remux === false || !hasFfmpeg()
       ? null
-      : createRemuxer({ inputFor: (url) => `http://127.0.0.1:${selfPort}${proxyPath(url, 'mpegts')}` });
+      : createRemuxer({
+          inputFor: (url) => `http://127.0.0.1:${selfPort}${proxyPath(url, 'mpegts')}`,
+          headers: { 'x-hdtilt-internal': internalKey },
+        });
   const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
   const gated = isPublic && Boolean(accounts);
 
@@ -132,7 +138,7 @@ export function createApp(opts = {}) {
     }
     const ip = clientIp(req);
     // ffmpeg reading for the HLS converter: inside the box, no X-Real-IP.
-    const internal = /^(::ffff:)?127\.0\.0\.1$|^::1$/.test(req.socket.remoteAddress || '') && !req.headers['x-real-ip'];
+    const internal = isInternal(req);
     const short = /\.(m3u8?|png|jpe?g|gif|webp|svg|ico)$/i.test(new URL(upstream).pathname);
     // Playlists and logos are short requests; only a long-lived body counts.
     const counted = !short && !internal;
@@ -254,6 +260,26 @@ export function createApp(opts = {}) {
     return send(res, 404, { error: 'no such endpoint' });
   }
 
+  /** ffmpeg reading for the HLS converter: it carries this process's secret header. */
+  const isInternal = (req) => req.headers['x-hdtilt-internal'] === internalKey;
+
+  const cookieOf = (req, name) => {
+    for (const part of String(req.headers.cookie || '').split(';')) {
+      const [k, ...v] = part.trim().split('=');
+      if (k === name) return decodeURIComponent(v.join('='));
+    }
+    return '';
+  };
+
+  /** Secure wherever the page came over https (hdtilt.com, behind nginx). */
+  const mediaCookie = (value, maxAge, req) =>
+    `hdtilt_media=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`;
+
+  async function mediaAllowed(req) {
+    if (accounts.mediaUser(cookieOf(req, 'hdtilt_media'))) return true;
+    return Boolean(req.headers.authorization && (await accounts.whoFrom(req.headers.authorization)));
+  }
+
   /** Token and revocation endpoints take a form body (RFC 6749) or JSON. */
   const readBody = async (req) => {
     const type = String(req.headers['content-type'] || '');
@@ -303,7 +329,20 @@ export function createApp(opts = {}) {
           case '/api/auth/refresh':
             return send(res, 200, await accounts.refresh(b.refreshToken));
           case '/api/auth/logout':
-            return send(res, 200, await accounts.logout(b));
+            return send(res, 200, await accounts.logout(b), { 'set-cookie': mediaCookie('', 0, req) });
+          case '/api/auth/media': {
+            // Called by the app after any sign-in and at start: the cookie that
+            // lets <video> and <img> through the proxy on hdtilt.com.
+            const claims = await accounts.whoFrom(req.headers.authorization);
+            if (!claims) return send(res, 401, { error: 'Sign in first', code: 'signin' });
+            const days = 30;
+            return send(
+              res,
+              200,
+              { ok: true },
+              { 'set-cookie': mediaCookie(accounts.mediaToken(claims.userId, days * 86400_000), days * 86400, req) },
+            );
+          }
         }
       } catch (e) {
         return fail(e, path === '/api/auth/login' || path === '/api/auth/refresh' ? 401 : 400);
@@ -437,6 +476,10 @@ export function createApp(opts = {}) {
         });
       }
       const pm = /^\/p\/([A-Za-z0-9_-]+)(?:\/[^/]*)?$/.exec(path);
+      // On hdtilt.com the stream proxy is for signed-in viewers only (the
+      // media cookie, or a bearer); ffmpeg's own reads come from inside.
+      if ((pm || path.startsWith('/hls/')) && gated && !isInternal(req) && !(await mediaAllowed(req)))
+        return send(res, 401, 'Sign in to watch');
       if (pm) return await proxy(req, res, pm[1]);
       if (path.startsWith('/hls/')) return await hls(req, res, path);
       if (path === '/mcp') return await mcp(req, res);

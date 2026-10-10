@@ -9,7 +9,7 @@
 // The library holds provider logins, so it is encrypted at rest (AES-256-GCM,
 // HDTILT_LIBRARY_KEY) and never logged.
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { AuthSystem, MemoryAdapter, PostgresAdapter } from '@profullstack/auth-system';
 import { createOAuthServer, memoryStore as oauthMemoryStore } from '@profullstack/auth-system/oauth2';
 import { OAUTH2_SCHEMA, postgresStore as oauthPostgresStore } from '@profullstack/auth-system/oauth2/postgres';
@@ -176,6 +176,9 @@ export function createAccounts(opts = {}) {
     (env.DATABASE_URL ? new PostgresAdapter({ connectionString: env.DATABASE_URL }) : new MemoryAdapter());
   const store = adapter instanceof PostgresAdapter ? postgresStore(adapter) : memoryStore(adapter);
   const box = sealer(env.HDTILT_LIBRARY_KEY || `${secret || 'dev'}:library`);
+  const mediaKey = createHash('sha256')
+    .update(`${secret || 'hdtilt-dev-secret'}:media`)
+    .digest();
 
   const auth = new AuthSystem({
     adapter,
@@ -379,6 +382,24 @@ export function createAccounts(opts = {}) {
       return { ok: true };
     },
     whoFrom,
+    /**
+     * The media cookie: video, segment and logo requests cannot carry a bearer
+     * token, so a signed `userId.expiry.mac` rides along as an HttpOnly cookie.
+     */
+    mediaToken(userId, ttlMs = 30 * 86400_000) {
+      const body = `${userId}.${Date.now() + ttlMs}`;
+      return `${body}.${createHmac('sha256', mediaKey).update(body).digest('base64url')}`;
+    },
+    mediaUser(token) {
+      const parts = String(token || '').split('.');
+      if (parts.length !== 3) return null;
+      const [userId, exp, mac] = parts;
+      const want = createHmac('sha256', mediaKey).update(`${userId}.${exp}`).digest('base64url');
+      const a = Buffer.from(mac);
+      const b = Buffer.from(want);
+      if (a.length !== b.length || !timingSafeEqual(a, b) || !(Number(exp) > Date.now())) return null;
+      return userId;
+    },
     async me(claims) {
       const u = await adapter.getUserById(claims.userId);
       if (!u) throw new Error('No such account');

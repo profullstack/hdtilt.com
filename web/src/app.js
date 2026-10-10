@@ -69,6 +69,8 @@ async function boot() {
       S.playlists.push({ id: `saved:${s.name}`, name: s.name, source: { type: 'saved', name: s.name } });
     }
   }
+  // Signed in from before: make sure the stream proxy's cookie is fresh.
+  if (account.current() && api.serverInfo.public) await account.renewMediaCookie();
   account.attachSync(collectLibrary, mergeLibrary);
   account.onChange(updateNavAccount);
   updateNavAccount();
