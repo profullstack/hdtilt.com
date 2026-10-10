@@ -591,18 +591,30 @@ $('channels').addEventListener('click', (e) => {
   }
   const r = e.target.closest('.row');
   if (!r) return;
+  // The finger lifting after a long-press (which favorited) is not a pick.
+  if (longPressed) {
+    longPressed = false;
+    return;
+  }
   const i = Number(r.dataset.i);
   S.focus = i;
   S.pane = 'channels';
   const ch = S.view[i];
-  if (ch.id === S.playing?.id && !S.catchup) back();
-  else play(ch);
+  // A click or tap means "watch this": play it and close the list. The remote
+  // keeps TiviMate's preview, where OK plays and the list stays (keydown).
+  if (ch.id !== S.playing?.id || S.catchup) play(ch);
+  closeToPicture();
 });
+let longPressed = false;
 let pressTimer = 0;
 $('channels').addEventListener('pointerdown', (e) => {
   const r = e.target.closest('.row');
   if (!r) return;
-  pressTimer = setTimeout(() => toggleFav(S.view[Number(r.dataset.i)]), 650);
+  longPressed = false;
+  pressTimer = setTimeout(() => {
+    longPressed = true;
+    toggleFav(S.view[Number(r.dataset.i)]);
+  }, 650);
 });
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'scroll'])
   $('channels').addEventListener(ev, () => clearTimeout(pressTimer), true);
@@ -758,16 +770,21 @@ function guideMove(dr, dt) {
   renderGuide();
 }
 
-function guideOk() {
+/** OK in the guide. `close`: a click, which means watch it now, full screen. */
+function guideOk({ close = false } = {}) {
   const { ch, p } = focusedProgramme();
   if (!ch) return;
   if (p && p.stop <= Date.now() && ch.catchup) {
     const url = catchupUrl(ch, S.data.source, p.start, p.stop, S.data.account?.timeZone);
-    if (url) return play(ch, { url, programme: p });
+    if (url) {
+      play(ch, { url, programme: p });
+      return close && closeToPicture();
+    }
   }
   if (p && p.start > Date.now()) return; // the future cannot be watched yet
-  if (ch.id === S.playing?.id && !S.catchup) return back();
+  if (ch.id === S.playing?.id && !S.catchup) return close ? closeToPicture() : back();
   play(ch);
+  if (close) closeToPicture();
 }
 
 $('guide-grid').addEventListener('click', (e) => {
@@ -778,7 +795,7 @@ $('guide-grid').addEventListener('click', (e) => {
   const same = r === G.row && (!t || (G.focusT >= t && focusedProgramme().p?.start === t));
   G.row = r;
   if (t) G.focusT = t + 1;
-  if (same) guideOk();
+  if (same) guideOk({ close: true });
   else renderGuide();
 });
 $('guide-grid').addEventListener(
@@ -1426,6 +1443,13 @@ function navAct(act) {
   else syncNav();
 }
 
+// A click on the dimmed picture around a sheet closes it, unless the sheet is
+// the only place to be (signing in on hdtilt.com, or the first playlist).
+$('sheet').addEventListener('click', (e) => {
+  if (e.target !== $('sheet') || !S.pl || signInFirst()) return;
+  closeToPicture();
+});
+
 $('nav').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (b) navAct(b.dataset.act);
@@ -1456,7 +1480,8 @@ function toast(text) {
 
 let lastTap = 0;
 $('video').addEventListener('click', () => {
-  if (S.mode !== 'tv') return back();
+  // The picture is behind everything: clicking it means "just the picture".
+  if (S.mode !== 'tv') return closeToPicture();
   const now = Date.now();
   if ($('video').muted) $('video').muted = false;
   if (now - lastTap < 300) toggleFullscreen();
