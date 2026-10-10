@@ -264,3 +264,48 @@ describe('rate limit', () => {
     expect(codes[20]).toBe(429);
   });
 });
+
+describe('hdtilt.com needs an account', () => {
+  it('refuses to load a playlist or guide without one', async () => {
+    for (const path of ['/api/load', '/api/guide', '/api/nownext']) {
+      const r = await post(path, {
+        source: { type: 'm3u', url: 'http://example.test/x.m3u' },
+        url: 'http://example.test/g.xml',
+        channels: [],
+      });
+      expect(r.status).toBe(401);
+      expect((await r.json()).code).toBe('signin');
+    }
+  });
+  it('lets a signed-in session through', async () => {
+    const s = (await (await post('/api/auth/login', { login: 'viewer_1', password: 'new-couch-potato' })).json())
+      .tokens;
+    const r = await post('/api/load', { source: { type: 'm3u', url: 'http://127.0.0.1:1/x.m3u' } }, s.accessToken);
+    expect(r.status).not.toBe(401); // past the gate; this address is then refused as private
+  });
+  it('lets MCP clients discover tools, but not call them, signed out', async () => {
+    const rpc = (body, token) => post('/mcp', body, token).then((r) => r.json());
+    const list = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(list.result.tools.length).toBeGreaterThan(0);
+    const call = await rpc({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'list_groups', arguments: { source: { type: 'm3u', url: 'http://127.0.0.1:1/x' } } },
+    });
+    expect(call.error.code).toBe(-32001);
+    const s = (await (await post('/api/auth/login', { login: 'viewer_1', password: 'new-couch-potato' })).json())
+      .tokens;
+    const ok = await rpc(
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'list_groups', arguments: { source: { type: 'm3u', url: 'http://127.0.0.1:1/x' } } },
+      },
+      s.accessToken,
+    );
+    expect(ok.error).toBeUndefined();
+    expect(ok.result).toBeDefined();
+  });
+});

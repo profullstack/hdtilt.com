@@ -45,7 +45,8 @@ const UPSTREAM_UA = process.env.HDTILT_UA || 'VLC/3.0.21 LibVLC/3.0.21';
  */
 export function createApp(opts = {}) {
   const isPublic = opts.public ?? process.env.HDTILT_PUBLIC === '1';
-  const allowPrivate = opts.allowPrivate ?? !isPublic;
+  // HDTILT_ALLOW_PRIVATE=1: a public box that also serves a tuner on its own LAN (and tests).
+  const allowPrivate = opts.allowPrivate ?? (process.env.HDTILT_ALLOW_PRIVATE === '1' || !isPublic);
   const maxStreams = opts.maxStreamsPerIp ?? (isPublic ? 3 : Number.POSITIVE_INFINITY);
   const streamsByIp = new Map();
 
@@ -64,6 +65,7 @@ export function createApp(opts = {}) {
       ? null
       : createRemuxer({ inputFor: (url) => `http://127.0.0.1:${selfPort}${proxyPath(url, 'mpegts')}` });
   const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
+  const gated = isPublic && Boolean(accounts);
 
   // Sign-in and sign-up are the guessable endpoints: 20 tries a minute per address.
   const authPerMinute = opts.authPerMinute ?? 20;
@@ -200,6 +202,12 @@ export function createApp(opts = {}) {
     ) {
       if (!accounts) return send(res, 404, { error: 'accounts are not enabled on this server' });
       return account(req, res, path);
+    }
+
+    // hdtilt.com needs an account before it loads anything; a local install has none.
+    if (gated && (path === '/api/load' || path === '/api/guide' || path === '/api/nownext')) {
+      if (!(await accounts.whoFrom(req.headers.authorization)))
+        return send(res, 401, { error: 'Sign in first', code: 'signin' });
     }
 
     // Load a playlist the browser holds. Stateless: nothing is stored.
@@ -363,6 +371,24 @@ export function createApp(opts = {}) {
   async function mcp(req, res) {
     if (req.method === 'GET') return send(res, 405, 'POST JSON-RPC here', { allow: 'POST' });
     const body = await readJson(req);
+    // Tools need an account on hdtilt.com (a session or an `hdtilt login` token);
+    // initialize and tools/list stay open so a client can discover them.
+    if (gated && !(await accounts.whoFrom(req.headers.authorization))) {
+      const deny = (m) =>
+        m?.method === 'tools/call' && m.id != null
+          ? {
+              jsonrpc: '2.0',
+              id: m.id,
+              error: { code: -32001, message: 'Sign in first: send Authorization: Bearer <token> (hdtilt login)' },
+            }
+          : null;
+      const msgs = Array.isArray(body) ? body : [body];
+      if (msgs.some((m) => m?.method === 'tools/call')) {
+        const out = await Promise.all(msgs.map((m) => deny(m) || handleRpc(m, ctx)));
+        const kept = out.filter(Boolean);
+        return Array.isArray(body) ? send(res, 200, kept) : send(res, 200, kept[0]);
+      }
+    }
     if (Array.isArray(body)) {
       const out = (await Promise.all(body.map((m) => handleRpc(m, ctx)))).filter(Boolean);
       return out.length ? send(res, 200, out) : send(res, 202, '');
