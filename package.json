@@ -1,6 +1,6 @@
 {
   "name": "hdtilt",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Open-source IPTV player: M3U, Xtream Codes and XMLTV, with a TV guide. Web/PWA, desktop, CLI, TUI, MCP and API.",
   "license": "MIT",
   "author": {

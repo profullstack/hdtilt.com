@@ -24,7 +24,8 @@ self.addEventListener('fetch', (e) => {
   if (/^\/(api|p|mcp)\//.test(url.pathname) || url.pathname === '/mcp') return;
   // Network first so a deploy shows up at once; the cache is for offline.
   e.respondWith(
-    fetch(e.request)
+    // no-cache: revalidate with the server, never trust the HTTP cache for the shell.
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) caches.open(CACHE).then((c) => c.put(e.request, res.clone()));
         return res;

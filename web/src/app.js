@@ -399,10 +399,11 @@ function pickGroup(i) {
 
 function renderHead(focusFilter = false) {
   const h = $('list-head');
-  h.innerHTML = `<h2>${esc(S.group)}</h2>
+  h.innerHTML = `<button type="button" class="close-btn" id="list-close" aria-label="Close, back to the picture">✕</button><h2>${esc(S.group)}</h2>
     <input id="q" class="filter" type="search" placeholder="Filter by name or number" value="${esc(S.query)}" autocomplete="off" spellcheck="false" aria-label="Filter channels">
     <span class="hint" id="list-count"></span>`;
   updateCount();
+  $('list-close').onclick = () => closeToPicture();
   const q = $('q');
   q.oninput = () => {
     S.query = q.value.trim();
@@ -609,6 +610,8 @@ function renderGuideInfo() {
     ${p ? `<div class="times">${new Date(p.start).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} · ${hhmm(p.start)} – ${hhmm(p.stop)}${p.category ? ` · ${esc(p.category)}` : ''}${can ? ' · OK to watch from the start' : ''}</div>` : ''}
     ${p?.desc ? `<p>${esc(p.desc)}</p>` : ''}`;
 }
+
+$('guide-close').addEventListener('click', () => closeToPicture());
 
 $('gq').addEventListener('input', () => {
   G.q = $('gq').value.trim();
@@ -1129,7 +1132,14 @@ function listPathForPlaying() {
 
 function push(path) {
   if (location.pathname + location.search === path) return;
-  history.pushState({ depth: ++depth }, '', path);
+  // fromTv: this view was opened over the picture, so stepping back from it IS closing.
+  history.pushState({ depth: ++depth, fromTv: S.mode === 'tv' }, '', path);
+}
+
+/** ✕: back to the picture, whatever view chain led here. */
+function closeToPicture() {
+  if (history.state?.fromTv && (history.state?.depth || 0) > 0) return history.back();
+  go(S.pl ? watchPath() : '/settings/add');
 }
 
 function go(path, { replace = false } = {}) {
@@ -1251,10 +1261,8 @@ function focusNav() {
 function navAct(act) {
   navFocus = -1;
   const to = {
-    live:
-      S.mode === 'list' && ![FAV, RECENT].includes(S.group)
-        ? null
-        : `/channels${[FAV, RECENT, ALL].includes(S.group) ? '' : `/${encodeURIComponent(S.group)}`}`,
+    // Live TV is always every channel; the groups are one press away inside it.
+    live: S.mode === 'list' && S.group === ALL && !S.query ? null : '/channels',
     guide: '/guide',
     favs: '/favorites',
     recent: '/recent',
@@ -1301,8 +1309,10 @@ $('video').addEventListener('click', () => {
   $('nav').hidden ? showNav() : hideChrome();
 });
 let moveTimer = 0;
-addEventListener('mousemove', () => {
-  if (S.mode !== 'tv' || isTv) return;
+// A real mouse only: a tap on a phone also fires a synthetic mousemove, which
+// showed the nav a moment before the tap's click hid it again.
+addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse' || S.mode !== 'tv' || isTv) return;
   if ($('nav').hidden) showNav();
   clearTimeout(moveTimer);
   moveTimer = setTimeout(hideChrome, 3500);
