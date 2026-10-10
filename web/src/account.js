@@ -27,7 +27,9 @@ async function refresh() {
     body: JSON.stringify({ refreshToken: session.refreshToken }),
   });
   if (!r.ok) {
-    save(null);
+    // Only a refusal ends the session. A 5xx is the server restarting, and
+    // signing a TV out over that would be worse than one failed request.
+    if (r.status < 500) save(null);
     return false;
   }
   const { tokens } = await r.json();
