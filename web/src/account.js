@@ -18,32 +18,43 @@ function save(next) {
   emit();
 }
 
-async function call(path, body, { auth = false, method = body === undefined ? 'GET' : 'POST' } = {}) {
+/** Swap an expired access token for a new one; false when the session is over. */
+async function refresh() {
+  if (!session?.refreshToken) return false;
+  const r = await fetch('/api/auth/refresh', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refreshToken: session.refreshToken }),
+  });
+  if (!r.ok) {
+    save(null);
+    return false;
+  }
+  const { tokens } = await r.json();
+  save({ ...session, ...tokens });
+  return true;
+}
+
+/** fetch with the session attached, refreshed once if it has expired. */
+export async function authedFetch(path, init = {}) {
   const go = () =>
     fetch(path, {
-      method,
-      headers: {
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(auth && session ? { authorization: `Bearer ${session.accessToken}` } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...init,
+      headers: { ...(init.headers || {}), ...(session ? { authorization: `Bearer ${session.accessToken}` } : {}) },
     });
   let res = await go();
-  if (res.status === 401 && auth && session?.refreshToken) {
-    // Access tokens last an hour; the refresh token keeps a TV signed in.
-    const r = await fetch('/api/auth/refresh', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refreshToken: session.refreshToken }),
-    });
-    if (r.ok) {
-      const { tokens } = await r.json();
-      save({ ...session, ...tokens });
-      res = await go();
-    } else {
-      save(null);
-    }
-  }
+  // Access tokens last an hour; the refresh token keeps a TV signed in.
+  if (res.status === 401 && session && (await refresh())) res = await go();
+  return res;
+}
+
+async function call(path, body, { auth = false, method = body === undefined ? 'GET' : 'POST' } = {}) {
+  const init = {
+    method,
+    headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  };
+  const res = auth ? await authedFetch(path, init) : await fetch(path, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || `server answered ${res.status}`);
@@ -56,6 +67,7 @@ async function call(path, body, { auth = false, method = body === undefined ? 'G
 
 export async function signIn(login, password) {
   const r = await call('/api/auth/login', { login, password });
+  store.prefs.write('hadAccount', true);
   save({ ...r.tokens, user: r.user });
   return r.user;
 }
@@ -65,6 +77,7 @@ export const forgot = (email) => call('/api/auth/forgot', { email });
 export const reset = (token, password) => call('/api/auth/reset', { token, password });
 export async function verify(token) {
   const r = await call('/api/auth/verify', { token });
+  store.prefs.write('hadAccount', true);
   save({ ...r.tokens, user: r.user });
   return r.user;
 }

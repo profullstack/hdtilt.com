@@ -997,3 +997,8 @@ label {
     height: 2.4rem;
   }
 }
+
+/* ---- signed out on hdtilt.com: only the account screen exists ------------ */
+body.gated .nav-items button:not(#nav-account) {
+  display: none;
+}

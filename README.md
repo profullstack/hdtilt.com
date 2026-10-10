@@ -20,7 +20,7 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 
 ## Accounts
 
-An account is optional. It keeps your playlists, favorites and recent channels the same on every screen you watch on.
+On hdtilt.com an account comes first: sign up (username, email, password), confirm the email, then add your playlist. It keeps your playlists, favorites and recent channels the same on every screen you watch on. The desktop app and a self-hosted `hdtilt serve` need no account.
 
 - **Username and password.** Sign in with either your username or your email. A TV has no mail client and no passkey, so a password is the way in on one.
 - **The email is confirmed before the account can sign in.** The link signs you straight in, and "Forgot your password?" sends a reset link.

@@ -72,6 +72,11 @@ async function boot() {
   account.attachSync(collectLibrary, mergeLibrary);
   account.onChange(updateNavAccount);
   updateNavAccount();
+  if (signInFirst()) {
+    // Email links and the CLI's sign-in pages still work signed out.
+    if (await handleRoute()) return;
+    return go(signInPath(), { replace: true });
+  }
   // A new device that is signed in starts with the account's playlists.
   if (!S.playlists.length && account.current()) await account.syncNow().catch(() => {});
   const cur = store.prefs.read('current', null);
@@ -97,6 +102,7 @@ async function usePlaylist(pl, { refresh = false, channelId = null } = {}) {
     try {
       await loadFresh(pl);
     } catch (e) {
+      if (e.status === 401) return go(signInPath(), { replace: true });
       stageMsg(`<strong>Could not load ${esc(pl.name)}</strong>${esc(e.message)}`);
       return openSettings();
     }
@@ -991,8 +997,9 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
         .catch((x) => ($('a-err').textContent = x.message));
     sh.querySelector('#a-out').onclick = async () => {
       await account.signOut();
+      await forgetDevice();
       toast('Signed out');
-      go(watchPath(), { replace: true });
+      go(signInPath(), { replace: true });
     };
     sh.querySelector('#a-close').onclick = () => back();
     return;
@@ -1000,7 +1007,7 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
   const sh = sheet(
     'account',
     `<h1><img src="/icon.svg" alt="">${tab === 'up' ? 'Create account' : 'Sign in'}</h1>
-    <p class="sub">${note || 'An account keeps your playlists and favorites on every screen you watch on.'}</p>
+    <p class="sub">${note || (signInFirst() ? (tab === 'up' ? 'Create a free account to start watching. Your playlists and favorites will follow you to every screen.' : 'Sign in to watch. Your playlists and favorites come with you.') : 'An account keeps your playlists and favorites on every screen you watch on.')}</p>
     <div class="tabs"><button class="${tab === 'in' ? 'on' : ''}" data-tab="in">Sign in</button><button class="${tab === 'up' ? 'on' : ''}" data-tab="up">Create account</button></div>
     <form id="af">
       ${
@@ -1012,7 +1019,7 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
              <label for="a-pass">Password</label><input class="field" id="a-pass" type="password" autocomplete="current-password" required>`
       }
       <div class="err" id="a-err"></div>
-      <div class="actions"><button class="btn primary" type="submit">${tab === 'up' ? 'Create account' : 'Sign in'}</button><button class="btn" type="button" id="a-cancel">Cancel</button></div>
+      <div class="actions"><button class="btn primary" type="submit">${tab === 'up' ? 'Create account' : 'Sign in'}</button>${signInFirst() ? '' : '<button class="btn" type="button" id="a-cancel">Cancel</button>'}</div>
     </form>
     ${tab === 'in' ? '<p class="note"><button class="linkbtn" id="a-forgot">Forgot your password?</button></p>' : '<p class="note">We email you a link to confirm the address before you can sign in.</p>'}`,
   );
@@ -1021,7 +1028,7 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       history.replaceState(history.state, '', b.dataset.tab === 'up' ? '/account/signup' : '/account');
       openAccount({ tab: b.dataset.tab, after, note });
     };
-  sh.querySelector('#a-cancel').onclick = () => back();
+  sh.querySelector('#a-cancel')?.addEventListener('click', () => back());
   sh.querySelector('#a-forgot')?.addEventListener('click', () => go('/account/forgot'));
   sh.querySelector('#af').onsubmit = async (e) => {
     e.preventDefault();
@@ -1128,6 +1135,32 @@ async function openConsent(query) {
   const go = (decision) => account.authorize(query, decision).then((r) => location.assign(r.redirect));
   sh.querySelector('#o-yes').onclick = () => go('approve');
   sh.querySelector('#o-no').onclick = () => go('deny');
+}
+
+/**
+ * Sign-out on a shared screen: the account keeps the library, so this device
+ * forgets its copy (playlists carry provider logins) and stops playing.
+ */
+async function forgetDevice() {
+  S.attached?.destroy();
+  S.attached = null;
+  $('video').pause();
+  $('video').removeAttribute('src');
+  for (const p of S.playlists) for (const k of ['ch', 'fav', 'recent']) await store.del(`${k}:${p.id}`);
+  await store.del('playlists');
+  for (const k of ['current', 'deletedPlaylists', 'libraryVersion']) store.prefs.write(k, null);
+  Object.assign(S, {
+    playlists: [],
+    pl: null,
+    data: null,
+    live: [],
+    playing: null,
+    previous: null,
+    favs: new Set(),
+    recent: [],
+  });
+  S.byId = new Map();
+  hideChrome();
 }
 
 /** Pages reached from outside: email links, and the OAuth hops. True when one was handled. */
@@ -1275,9 +1308,14 @@ addEventListener('popstate', (e) => {
   render(location.pathname + location.search);
 });
 
+/** hdtilt.com needs an account before anything else; a local install has none. */
+const signInFirst = () => api.serverInfo.public && api.serverInfo.accounts && !account.current();
+const signInPath = () => (store.prefs.read('hadAccount', false) ? '/account' : '/account/signup');
+
 function render(full) {
   const u = new URL(full, location.origin);
   const [view, arg] = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  if (signInFirst() && view !== 'account') return go(signInPath(), { replace: true });
   const needsPlaylist = ['watch', 'channels', 'favorites', 'recent', 'search', 'guide', undefined].includes(view);
   if (needsPlaylist && !S.pl) return go('/settings/add', { replace: true });
   switch (view) {
@@ -1394,6 +1432,8 @@ $('nav').addEventListener('click', (e) => {
 });
 
 function updateNavAccount() {
+  // Signed out on hdtilt.com, the account is the only place to go.
+  document.body.classList.toggle('gated', Boolean(signInFirst()));
   const b = $('nav-account');
   b.hidden = !api.serverInfo.accounts;
   const u = account.current();

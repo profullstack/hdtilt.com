@@ -2,6 +2,7 @@
 
 import { streamKind } from '../../src/core/sources.js';
 import { b64urlEncode, proxyPath } from '../../src/core/util.js';
+import { authedFetch } from './account.js';
 
 /** The same test @profullstack/player uses to pick an engine. */
 export const canMse = () => typeof window.MediaSource !== 'undefined';
@@ -9,18 +10,18 @@ export const canMse = () => typeof window.MediaSource !== 'undefined';
 export let serverInfo = { public: true, version: '' };
 
 async function json(path, body) {
-  const res = await fetch(
-    path,
+  const init =
     body === undefined
       ? {}
-      : {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-  );
+      : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  const res = await authedFetch(path, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `server answered ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `server answered ${res.status}`);
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
   return data;
 }
 
