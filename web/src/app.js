@@ -298,7 +298,7 @@ function showBanner(autohide = true) {
   ensureEpg([ch]);
   const b = $('banner');
   const { now, next } = S.catchup ? { now: S.catchup.programme, next: null } : nn(ch);
-  b.innerHTML = `
+  $('banner-info').innerHTML = `
     ${logo(ch, 'logo')}
     <div>
       <div><span class="no">${ch.chno ?? ''}</span> <span class="name">${esc(ch.name)}</span></div>
@@ -308,6 +308,7 @@ function showBanner(autohide = true) {
     </div>
     <div class="tags">${S.catchup ? '<span class="tag">CATCH-UP</span>' : '<span class="tag live">LIVE</span>'}<button type="button" class="fav-btn banner-fav${S.favs.has(ch.id) ? ' on' : ''}" aria-pressed="${S.favs.has(ch.id)}">${S.favs.has(ch.id) ? '★ Favorite' : '☆ Favorite'}</button></div>`;
   b.hidden = false;
+  updateControls();
   document.body.classList.add('chrome-on');
   clearTimeout(bannerTimer);
   if (autohide) bannerTimer = setTimeout(hideChrome, 5000);
@@ -319,6 +320,120 @@ $('banner').addEventListener('click', (e) => {
   toggleFav(S.playing);
   showBanner();
 });
+
+/* ------------------------------------------------------------- controls */
+
+const ICON = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+  vol: '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>',
+  muted:
+    '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z"/></svg>',
+  pip: '<svg viewBox="0 0 24 24"><path d="M19 7h-8v6h8V7zm2-4H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14z"/></svg>',
+  fs: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
+  unfs: '<svg viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>',
+};
+const clock = (t) => {
+  if (!Number.isFinite(t)) return '0:00';
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = String(Math.floor(t % 60)).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+};
+const ctl = (name) => $('controls').querySelector(`[data-c="${name}"]`);
+
+function updateControls() {
+  const v = $('video');
+  const play = ctl('play');
+  play.innerHTML = v.paused ? ICON.play : ICON.pause;
+  play.setAttribute('aria-label', v.paused ? 'Play' : 'Pause');
+  const silent = v.muted || v.volume === 0;
+  ctl('mute').innerHTML = silent ? ICON.muted : ICON.vol;
+  ctl('mute').setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
+  $('vol').value = String(silent ? 0 : v.volume);
+  ctl('pip').innerHTML = ICON.pip;
+  ctl('pip').hidden = !document.pictureInPictureEnabled;
+  ctl('fs').innerHTML = document.fullscreenElement ? ICON.unfs : ICON.fs;
+  ctl('fs').hidden = !document.fullscreenEnabled;
+  // A catch-up programme has an end, so it can be scrubbed; live TV cannot.
+  const seekable = Boolean(S.catchup) && Number.isFinite(v.duration) && v.duration > 0;
+  $('seekwrap').hidden = !seekable;
+  if (seekable && !seeking) {
+    $('seek').max = String(v.duration);
+    $('seek').value = String(v.currentTime);
+    $('t-cur').textContent = clock(v.currentTime);
+    $('t-dur').textContent = clock(v.duration);
+  }
+}
+
+function togglePlay() {
+  const v = $('video');
+  if (v.paused) v.play().catch(() => {});
+  else v.pause();
+}
+
+function setVolume(x) {
+  const v = $('video');
+  v.volume = Math.min(1, Math.max(0, x));
+  v.muted = v.volume === 0;
+}
+
+/** Keep the controls up while someone is using them. */
+function holdChrome() {
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideChrome, 5000);
+}
+
+let seeking = false;
+$('controls').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const b = e.target.closest('[data-c]');
+  holdChrome();
+  if (!b) return;
+  const v = $('video');
+  const c = b.dataset.c;
+  if (c === 'play') togglePlay();
+  if (c === 'mute') {
+    if (v.muted || v.volume === 0) {
+      v.muted = false;
+      if (v.volume === 0) v.volume = 0.5;
+    } else v.muted = true;
+  }
+  if (c === 'fs') toggleFullscreen();
+  if (c === 'pip') {
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+    else v.requestPictureInPicture?.().catch(() => {});
+  }
+});
+$('vol').addEventListener('input', (e) => {
+  holdChrome();
+  setVolume(Number(e.target.value));
+});
+$('seek').addEventListener('input', (e) => {
+  seeking = true;
+  holdChrome();
+  $('t-cur').textContent = clock(Number(e.target.value));
+});
+$('seek').addEventListener('change', (e) => {
+  $('video').currentTime = Number(e.target.value);
+  seeking = false;
+});
+for (const ev of ['play', 'pause', 'volumechange', 'durationchange', 'timeupdate'])
+  $('video').addEventListener(ev, () => !$('banner').hidden && updateControls());
+document.addEventListener('fullscreenchange', () => !$('banner').hidden && updateControls());
+
+// The volume is yours, across channels and visits.
+$('video').addEventListener('volumechange', () => {
+  const v = $('video');
+  store.prefs.write('volume', { level: v.volume, muted: v.muted });
+});
+{
+  const saved = store.prefs.read('volume', null);
+  if (saved) {
+    $('video').volume = Math.min(1, Math.max(0, Number(saved.level) || 0));
+    $('video').muted = Boolean(saved.muted);
+  }
+}
 
 function hideChrome() {
   $('banner').hidden = true;
@@ -788,7 +903,7 @@ function openSettings() {
     ${acct ? `<h2>Account</h2><p class="sub">${esc(acct.status || '')}${acct.expiresAt ? ` · expires ${new Date(acct.expiresAt).toLocaleDateString()}` : ''}${acct.maxConnections ? ` · ${acct.activeConnections}/${acct.maxConnections} connections` : ''}</p>` : ''}
     ${S.playing ? `<h2>Now playing</h2><p class="sub">${esc(S.playing.name)} · <button class="btn" id="s-copy">Copy stream URL</button></p>` : ''}
     <h2>Remote and keyboard</h2>
-    <p class="sub">↑ ↓ change channel · OK channel list · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter (list or guide) · M mute · Esc back</p>
+    <p class="sub">↑ ↓ change channel · OK channel list · Space play/pause · + − volume · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter (list or guide) · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
   $('s-add').onclick = () => go('/settings/add');
@@ -1415,8 +1530,22 @@ addEventListener('keydown', (e) => {
   if (S.mode === 'tv') {
     if (k === 'ArrowUp' || k === 'ChannelUp' || k === 'PageUp') zap(-1);
     else if (k === 'ArrowDown' || k === 'ChannelDown' || k === 'PageDown') zap(1);
-    else if (k === 'Enter' || k === ' ') go(listPathForPlaying());
-    else if (k === 'ArrowLeft') {
+    else if (k === 'Enter') go(listPathForPlaying());
+    else if (k === ' ' || k === 'k' || k === 'MediaPlayPause') {
+      togglePlay();
+      showBanner();
+    } else if (k === 'MediaPlay')
+      $('video')
+        .play()
+        .catch(() => {});
+    else if (k === 'MediaPause') $('video').pause();
+    else if (k === '+' || k === '=' || k === 'AudioVolumeUp') {
+      setVolume($('video').volume + 0.1);
+      showBanner();
+    } else if (k === '-' || k === 'AudioVolumeDown') {
+      setVolume($('video').volume - 0.1);
+      showBanner();
+    } else if (k === 'ArrowLeft') {
       push(listPathForPlaying());
       openList({ groups: true });
     } else if (k === 'ArrowRight' || k === 'i' || k === 'Info') showBanner();
@@ -1426,8 +1555,10 @@ addEventListener('keydown', (e) => {
       go(listPathForPlaying());
       $('q')?.focus();
     } else if (k === 's' || k === 'Settings') go('/settings');
-    else if (k === 'm' || k === 'AudioVolumeMute') $('video').muted = !$('video').muted;
-    else if (/^\d$/.test(k)) numberKey(k);
+    else if (k === 'm' || k === 'AudioVolumeMute') {
+      $('video').muted = !$('video').muted;
+      showBanner();
+    } else if (/^\d$/.test(k)) numberKey(k);
     else if (k === 'Backspace' || k === 'Last') play(S.previous);
     else if (back || k === 'ContextMenu' || k === 'Menu') {
       // Back over the picture is the menu: the nav, ready for the remote.
