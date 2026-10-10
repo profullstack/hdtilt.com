@@ -28,7 +28,13 @@ export function hasFfmpeg(bin = process.env.HDTILT_FFMPEG || 'ffmpeg') {
  * @param {{ inputFor: (url: string) => string, maxSessions?: number, root?: string, bin?: string }} opts
  *   inputFor turns an upstream URL into the address ffmpeg reads (our proxy).
  */
-export function createRemuxer({ inputFor, maxSessions = 20, root, bin = process.env.HDTILT_FFMPEG || 'ffmpeg' }) {
+export function createRemuxer({
+  inputFor,
+  headers = {},
+  maxSessions = 20,
+  root,
+  bin = process.env.HDTILT_FFMPEG || 'ffmpeg',
+}) {
   const base = root || join(process.env.HDTILT_CACHE || tmpdir(), 'hdtilt-hls');
   const sessions = new Map(); // key -> { dir, proc, last, url, ready, ended }
 
@@ -74,6 +80,14 @@ export function createRemuxer({ inputFor, maxSessions = 20, root, bin = process.
         // plays, and the rolling playlist would delete segments before Safari
         // asked for them. A live channel is real time already.
         '-re',
+        ...(Object.keys(headers).length
+          ? [
+              '-headers',
+              Object.entries(headers)
+                .map(([k, v]) => `${k}: ${v}\r\n`)
+                .join(''),
+            ]
+          : []),
         '-i',
         inputFor(url),
         '-map',

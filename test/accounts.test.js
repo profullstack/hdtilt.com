@@ -309,3 +309,31 @@ describe('hdtilt.com needs an account', () => {
     expect(ok.result).toBeDefined();
   });
 });
+
+describe('the stream proxy on hdtilt.com', () => {
+  const streamPath = `/p/${Buffer.from('http://127.0.0.1:1/live/x.ts').toString('base64url')}/x.ts`;
+  it('turns away a viewer who is not signed in', async () => {
+    const r = await fetch(at(streamPath));
+    expect(r.status).toBe(401);
+    expect(
+      (await fetch(at(`/hls/${Buffer.from('http://127.0.0.1:1/x.ts').toString('base64url')}/index.m3u8`))).status,
+    ).toBe(401);
+  });
+  it('lets the media cookie through, and logout takes it away', async () => {
+    const s = (await (await post('/api/auth/login', { login: 'viewer_1', password: 'new-couch-potato' })).json())
+      .tokens;
+    const issued = await post('/api/auth/media', {}, s.accessToken);
+    const cookie = issued.headers.get('set-cookie');
+    expect(cookie).toMatch(/^hdtilt_media=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax/);
+    const pair = cookie.split(';')[0];
+    const through = await fetch(at(streamPath), { headers: { cookie: pair } });
+    expect(through.status).not.toBe(401); // past the gate; the private address is refused next
+    const forged = pair.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    expect((await fetch(at(streamPath), { headers: { cookie: forged } })).status).toBe(401);
+    const out = await post('/api/auth/logout', { refreshToken: s.refreshToken, accessToken: s.accessToken });
+    expect(out.headers.get('set-cookie')).toMatch(/^hdtilt_media=; Path=\/; Max-Age=0/);
+  });
+  it('needs a session to issue the cookie', async () => {
+    expect((await post('/api/auth/media', {})).status).toBe(401);
+  });
+});

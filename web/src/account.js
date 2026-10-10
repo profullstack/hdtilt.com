@@ -65,10 +65,20 @@ async function call(path, body, { auth = false, method = body === undefined ? 'G
   return data;
 }
 
+/**
+ * The cookie the stream proxy wants: <video> and <img> requests cannot carry
+ * the session's bearer token. Renewed at start and after every sign-in.
+ */
+export async function renewMediaCookie() {
+  if (!session) return;
+  await call('/api/auth/media', {}, { auth: true }).catch(() => {});
+}
+
 export async function signIn(login, password) {
   const r = await call('/api/auth/login', { login, password });
   store.prefs.write('hadAccount', true);
   save({ ...r.tokens, user: r.user });
+  await renewMediaCookie();
   return r.user;
 }
 export const register = (username, email, password) => call('/api/auth/register', { username, email, password });
@@ -79,6 +89,7 @@ export async function verify(token) {
   const r = await call('/api/auth/verify', { token });
   store.prefs.write('hadAccount', true);
   save({ ...r.tokens, user: r.user });
+  await renewMediaCookie();
   return r.user;
 }
 export async function signOut() {
