@@ -234,10 +234,12 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
       }, 9000);
     }
     video.play().catch(() => {
-      // Autoplay with sound refused: start muted and say so.
+      // The browser refuses sound until the viewer has touched the page. Play
+      // the picture now and turn the sound on at their first tap or key.
+      autoMuted = true;
       video.muted = true;
       video.play().catch(() => {});
-      stageMsg('Muted by the browser — press M or tap to unmute');
+      stageMsg('Tap anywhere or press a key for sound');
     });
   } catch (e) {
     onError(e.message || String(e));
@@ -268,7 +270,8 @@ function stageMsg(html) {
   m.hidden = !html;
 }
 
-$('video').addEventListener('playing', () => stageMsg(''));
+// Playing clears an error or a "loading", but not the "tap for sound" hint.
+$('video').addEventListener('playing', () => !autoMuted && stageMsg(''));
 
 /* ------------------------------------------------------------------ guide data */
 
@@ -300,6 +303,7 @@ const nn = (ch) => nowNext(S.epg.get(ch.id), Date.now());
 /* --------------------------------------------------------------- banner */
 
 let bannerTimer = 0;
+let autoMuted = false; // muted by the browser's autoplay rule, not by the viewer
 function showBanner(autohide = true) {
   const ch = S.playing;
   if (!ch) return;
@@ -402,6 +406,7 @@ $('controls').addEventListener('click', (e) => {
   const c = b.dataset.c;
   if (c === 'play') togglePlay();
   if (c === 'mute') {
+    autoMuted = false;
     if (v.muted || v.volume === 0) {
       v.muted = false;
       if (v.volume === 0) v.volume = 0.5;
@@ -430,18 +435,35 @@ for (const ev of ['play', 'pause', 'volumechange', 'durationchange', 'timeupdate
   $('video').addEventListener(ev, () => !$('banner').hidden && updateControls());
 document.addEventListener('fullscreenchange', () => !$('banner').hidden && updateControls());
 
-// The volume is yours, across channels and visits.
+// The volume is yours, across channels and visits. A mute the browser forced
+// on us is not yours, so it is never saved (it used to be, and every later
+// visit started muted). Old saves (no v: 2) carried that, so their mute is ignored.
 $('video').addEventListener('volumechange', () => {
+  if (autoMuted) return;
   const v = $('video');
-  store.prefs.write('volume', { level: v.volume, muted: v.muted });
+  store.prefs.write('volume', { v: 2, level: v.volume, muted: v.muted });
 });
 {
   const saved = store.prefs.read('volume', null);
   if (saved) {
-    $('video').volume = Math.min(1, Math.max(0, Number(saved.level) || 0));
-    $('video').muted = Boolean(saved.muted);
+    $('video').volume = Math.min(1, Math.max(0, Number(saved.level) || 1));
+    $('video').muted = saved.v === 2 && Boolean(saved.muted);
   }
 }
+
+/** The first touch or key press is what browsers wait for before allowing sound. */
+function soundOn(e) {
+  if (!autoMuted) return;
+  // M and the mute button unmute by themselves; doing it here too would let
+  // them toggle straight back to muted.
+  if (e.key === 'm' || e.key === 'AudioVolumeMute' || e.target?.closest?.('[data-c="mute"]')) return;
+  autoMuted = false;
+  const v = $('video');
+  v.muted = false;
+  if (v.paused) v.play().catch(() => {});
+  if (/for sound/.test($('stage-msg').textContent)) stageMsg('');
+}
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, soundOn, true);
 
 function hideChrome() {
   $('banner').hidden = true;
@@ -1485,7 +1507,6 @@ $('video').addEventListener('click', () => {
   // The picture is behind everything: clicking it means "just the picture".
   if (S.mode !== 'tv') return closeToPicture();
   const now = Date.now();
-  if ($('video').muted) $('video').muted = false;
   if (now - lastTap < 300) toggleFullscreen();
   lastTap = now;
   $('nav').hidden ? showNav() : hideChrome();
@@ -1623,6 +1644,7 @@ addEventListener('keydown', (e) => {
       $('q')?.focus();
     } else if (k === 's' || k === 'Settings') go('/settings');
     else if (k === 'm' || k === 'AudioVolumeMute') {
+      autoMuted = false;
       $('video').muted = !$('video').muted;
       showBanner();
     } else if (/^\d$/.test(k)) numberKey(k);
