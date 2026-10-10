@@ -84,6 +84,12 @@ async function boot() {
   const cur = store.prefs.read('current', null);
   const pl = S.playlists.find((p) => p.id === cur) || S.playlists[0];
   if (account.current()) account.syncNow().catch(() => {});
+  // A playlist this device has never loaded can take a while (and a busy server
+  // can drop it): the home screen shows that happening instead of a blank picture.
+  if (pl && !(await store.get(`ch:${pl.id}`)) && !/^\/(account|settings|verify|reset|oauth)/.test(location.pathname)) {
+    loadInBackground(pl);
+    return go('/home', { replace: true });
+  }
   // A deep link to a channel plays that one rather than the last one watched.
   const linked = /^\/watch\/([^/]+)/.exec(location.pathname)?.[1];
   if (pl) await usePlaylist(pl, { channelId: linked ? decodeURIComponent(linked) : null });
@@ -92,10 +98,15 @@ async function boot() {
   render(location.pathname + location.search);
 }
 
-async function usePlaylist(pl, { refresh = false, channelId = null } = {}) {
+/**
+ * Make `pl` the current playlist and start its last channel.
+ * `background`: the home screen is showing how the load goes, so nothing plays,
+ * nothing navigates, and a failure is thrown to the caller.
+ */
+async function usePlaylist(pl, { refresh = false, channelId = null, background = false } = {}) {
   S.pl = pl;
   store.prefs.write('current', pl.id);
-  stageMsg(`Loading ${esc(pl.name)}…`);
+  if (!background) stageMsg(`Loading ${esc(pl.name)}…`);
   const cached = await store.get(`ch:${pl.id}`);
   if (cached && !refresh) {
     setData(cached.data);
@@ -104,6 +115,10 @@ async function usePlaylist(pl, { refresh = false, channelId = null } = {}) {
     try {
       await loadFresh(pl);
     } catch (e) {
+      if (background) {
+        if (S.pl === pl && !S.data) S.pl = null;
+        throw e;
+      }
       if (e.status === 401) return go(signInPath(), { replace: true });
       stageMsg(`<strong>Could not load ${esc(pl.name)}</strong>${esc(e.message)}`);
       return openSettings();
@@ -112,13 +127,38 @@ async function usePlaylist(pl, { refresh = false, channelId = null } = {}) {
   S.favs = new Set(await store.get(`fav:${pl.id}`, []));
   S.recent = await store.get(`recent:${pl.id}`, []);
   buildGroups();
-  const last = S.byId.get(channelId) || S.byId.get(store.prefs.read(`last:${pl.id}`, null)) || S.live[0];
+  if (background) return;
+  const last = lastChannel(channelId);
   if (last) play(last);
   else stageMsg('<strong>No live channels in this playlist</strong>');
 }
 
+const lastChannel = (channelId = null) =>
+  S.byId.get(channelId) || S.byId.get(store.prefs.read(`last:${S.pl?.id}`, null)) || S.live[0] || null;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * fn(), again after a pause when the server was only busy. 503/504 are nginx
+ * while the server restarts, and a dropped connection has no status. The app's
+ * own refusals (a bad provider login, a dead playlist URL) are 4xx or 502.
+ */
+async function retrying(fn) {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const transient = !e.status || e.status === 503 || e.status === 504;
+      if (!transient || i >= 5) throw e;
+      HOME.retry = i + 1;
+      refreshHome();
+      await sleep(Math.min(2000 * 2 ** i, 15_000));
+    }
+  }
+}
+
 async function loadFresh(pl) {
-  const data = await api.load(pl.source);
+  const data = await retrying(() => api.load(pl.source));
   const keep = {
     channels: data.channels,
     epgUrl: data.epgUrl,
@@ -664,13 +704,56 @@ async function toggleFav(ch) {
     renderGroups();
     updateCount();
     renderChannels();
+  } else if (S.mode === 'guide') {
+    toast(S.favs.has(ch.id) ? `★ ${ch.name} added to favorites` : `${ch.name} removed from favorites`);
+    if (G.favs) {
+      G.list = guideChannels();
+      G.row = Math.min(G.row, Math.max(0, G.list.length - 1));
+      renderGuide();
+    }
+    syncGuideFav();
   } else showBanner();
 }
 
 /* ---------------------------------------------------------------- TV guide */
 
-const G = { row: 0, top: 0, start: 0, focusT: 0, q: '', list: [] };
+const G = { row: 0, top: 0, start: 0, focusT: 0, q: '', favs: false, list: [] };
 const SLOT = 30 * 60_000;
+
+/**
+ * The guide's rows: favorites only when that is switched on (a TV with a few
+ * hundred channels should not need scrolling to reach the ones you watch),
+ * else the open group, where Favorites as the group means everything.
+ */
+function guideChannels() {
+  const base = G.favs ? S.live.filter((c) => S.favs.has(c.id)) : S.group === FAV ? S.live : groupList();
+  return filterChannels(base, G.q);
+}
+
+function guidePath() {
+  const p = new URLSearchParams();
+  if (G.favs) p.set('only', 'favorites');
+  if (G.q) p.set('q', G.q);
+  return p.size ? `/guide?${p}` : '/guide';
+}
+
+function syncGuideFav() {
+  const b = $('gfav');
+  b.classList.toggle('on', G.favs);
+  b.setAttribute('aria-pressed', String(G.favs));
+  b.textContent = G.favs ? `★ Favorites (${S.favs.size})` : '☆ Favorites only';
+}
+
+function setGuideFavs(on) {
+  G.favs = on;
+  store.prefs.write('guideFavs', on);
+  G.list = guideChannels();
+  G.row = Math.max(0, G.list.indexOf(S.playing));
+  G.top = 0;
+  history.replaceState(history.state, '', guidePath());
+  syncGuideFav();
+  renderGuide();
+}
 
 function openGuide() {
   closeAll();
@@ -678,10 +761,12 @@ function openGuide() {
   S.mode = 'guide';
   syncNav();
   $('guide').hidden = false;
-  G.list = filterChannels(groupList(), G.q);
+  G.list = guideChannels();
   G.row = Math.max(0, G.list.indexOf(S.playing));
   G.top = 0;
   $('gq').value = G.q;
+  syncGuideFav();
+  history.replaceState(history.state, '', guidePath());
   G.start = Math.floor((Date.now() - SLOT / 2) / SLOT) * SLOT;
   G.focusT = Date.now();
   // The picture keeps playing, in the preview corner.
@@ -739,7 +824,7 @@ function renderGuide() {
     rows += `<div class="g-row" style="top:${k * rowH}px"><div class="g-ch" data-r="${r}"><span class="no">${c.chno ?? r + 1}</span>${logo(c, 'logo')}<span class="nm">${esc(c.name)}</span></div>${cells}</div>`;
   });
   if (!G.list.length) {
-    grid.innerHTML = `<div class="empty">No channel here matches "${esc(G.q)}".</div>`;
+    grid.innerHTML = `<div class="empty">${G.favs && !S.favs.size ? 'No favorites yet. Press F on a channel (or tap ☆) to add one, or switch Favorites off.' : `No channel here matches "${esc(G.q)}".`}</div>`;
     return renderGuideInfo();
   }
   grid.innerHTML = `<div class="g-times">${times}</div>${nowX > chW ? `<div class="g-now" style="left:${nowX}px"></div>` : ''}<div class="g-rows">${rows}</div>`;
@@ -770,12 +855,14 @@ function renderGuideInfo() {
 
 $('guide-close').addEventListener('click', () => closeToPicture());
 
+$('gfav').addEventListener('click', () => setGuideFavs(!G.favs));
+
 $('gq').addEventListener('input', () => {
   G.q = $('gq').value.trim();
-  G.list = filterChannels(groupList(), G.q);
+  G.list = guideChannels();
   G.row = 0;
   G.top = 0;
-  history.replaceState(history.state, '', G.q ? `/guide?q=${encodeURIComponent(G.q)}` : '/guide');
+  history.replaceState(history.state, '', guidePath());
   renderGuide();
 });
 
@@ -950,7 +1037,7 @@ function openSettings() {
     ${acct ? `<h2>Account</h2><p class="sub">${esc(acct.status || '')}${acct.expiresAt ? ` · expires ${new Date(acct.expiresAt).toLocaleDateString()}` : ''}${acct.maxConnections ? ` · ${acct.activeConnections}/${acct.maxConnections} connections` : ''}</p>` : ''}
     ${S.playing ? `<h2>Now playing</h2><p class="sub">${esc(S.playing.name)} · <button class="btn" id="s-copy">Copy stream URL</button></p>` : ''}
     <h2>Remote and keyboard</h2>
-    <p class="sub">↑ ↓ change channel · OK channel list · Space play/pause · + − volume · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / filter (list or guide) · M mute · Esc back</p>
+    <p class="sub">↑ ↓ change channel · OK channel list · Space play/pause · + − volume · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / or ↑ from the top row: filter, and the guide’s ☆ Favorites only · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
   $('s-add').onclick = () => go('/settings/add');
@@ -992,6 +1079,110 @@ function openSettings() {
       }
     };
   });
+}
+
+/* ---------------------------------------------------------------- home */
+// Where signing in lands. The library and the playlist load behind it (a big
+// Xtream line takes a while to list), and the ways in open once they have.
+
+const HOME = { pl: null, loading: null, error: null, retry: 0 };
+
+/** Load `pl` (or, with none, sync the account's library and take its current one) without blocking. */
+function loadInBackground(pl = null) {
+  if (HOME.loading) return HOME.loading;
+  Object.assign(HOME, { pl, error: null, retry: 0 });
+  const run = (async () => {
+    if (!pl) {
+      if (account.current()) await retrying(() => account.syncNow());
+      const cur = store.prefs.read('current', null);
+      pl = S.playlists.find((p) => p.id === cur) || S.playlists[0];
+      if (!pl) return;
+      HOME.pl = pl;
+      refreshHome();
+    }
+    await usePlaylist(pl, { background: true });
+  })()
+    .catch((e) => {
+      HOME.error = e;
+    })
+    .finally(() => {
+      HOME.loading = null;
+      refreshHome();
+    });
+  HOME.loading = run;
+  refreshHome();
+  return run;
+}
+
+const onHome = () => S.mode === 'sheet' && $('sheet').dataset.screen === 'home';
+const refreshHome = () => onHome() && openHome();
+
+function openHome() {
+  if (HOME.error?.status === 401) {
+    HOME.error = null;
+    return go(signInPath(), { replace: true });
+  }
+  const ready = Boolean(S.pl && S.data && !HOME.loading);
+  if (!ready && !HOME.loading && !HOME.error) {
+    if (!S.playlists.length && !account.current()) return go('/settings/add', { replace: true });
+    loadInBackground(S.pl || null);
+  }
+  if (!HOME.loading && !HOME.error && !S.pl) return go('/settings/add', { replace: true });
+  const pl = HOME.pl || S.pl;
+  const u = account.current();
+  const was = document.activeElement?.dataset?.home;
+  const last = ready ? lastChannel() : null;
+  let status;
+  if (ready)
+    status = `<strong>${esc(S.pl.name)}</strong> · ${S.live.length.toLocaleString()} channels · ${S.favs.size} favorite${S.favs.size === 1 ? '' : 's'}`;
+  else if (HOME.error)
+    status = `<strong>Could not load ${esc(pl?.name || 'your playlists')}</strong> ${esc(HOME.error.message)}`;
+  else
+    status = `<span class="spin" aria-hidden="true"></span>${pl ? `Loading <strong>${esc(pl.name)}</strong>…` : 'Fetching your playlists…'} ${HOME.retry ? `The server is busy, trying again (${HOME.retry}).` : 'A big playlist takes a moment.'}`;
+  const off = ready ? '' : ' disabled';
+  const sh = sheet(
+    'home',
+    `<h1><img src="/icon.svg" alt="">${u ? `Welcome, ${esc(u.username || u.email)}` : 'hdtilt'}</h1>
+    <p class="home-status${HOME.error ? ' err' : ''}" role="status">${status}</p>
+    <div class="home-tiles">
+      ${HOME.error ? '<button class="btn primary" data-home="retry">Try again</button>' : `<button class="btn primary" data-home="watch"${last ? '' : ' disabled'}>▶ ${last ? `Watch ${esc(last.name)}` : 'Watch'}</button>`}
+      <button class="btn" data-home="favs"${off}>★ Favorites</button>
+      <button class="btn" data-home="live"${off}>Live TV</button>
+      <button class="btn" data-home="guide"${off}>TV guide</button>
+      <button class="btn" data-home="settings">Playlists</button>
+    </div>`,
+  );
+  sh.querySelector('.home-tiles').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    const act = b.dataset.home;
+    if (act === 'retry') return loadInBackground(HOME.pl);
+    if (act === 'settings') return go('/settings');
+    // The picture starts behind whatever opens, the way it always does.
+    if (!S.playing) play(lastChannel());
+    if (act === 'watch') return go(watchPath(), { replace: true });
+    go({ favs: '/favorites', live: '/channels', guide: '/guide' }[act]);
+  };
+  // Keep the remote where it was, except that the moment the channels arrive it goes to Watch.
+  const enabled = [...sh.querySelectorAll('.home-tiles button:not([disabled])')];
+  const keep = HOME.shownReady === ready && enabled.find((b) => b.dataset.home === was);
+  HOME.shownReady = ready;
+  (keep || enabled[0])?.focus();
+}
+
+/** Arrow keys on the home screen: one row of buttons, Up from it to the nav. */
+function homeKey(e) {
+  const btns = [...$('sheet').querySelectorAll('.home-tiles button:not([disabled])')];
+  const i = btns.indexOf(document.activeElement);
+  const k = e.key;
+  // Home is where you start: there is no picture behind it to go back to yet.
+  if (k === 'Escape' || k === 'GoBack' || k === 'BrowserBack' || BACK_CODES.has(e.keyCode)) e.preventDefault();
+  else if (k === 'ArrowUp' && i <= 0) focusNav();
+  else if (k === 'ArrowRight' || k === 'ArrowDown') btns[Math.min(btns.length - 1, i + 1)]?.focus();
+  else if (k === 'ArrowLeft' || k === 'ArrowUp') btns[Math.max(0, i - 1)]?.focus();
+  else return false;
+  e.preventDefault();
+  return true;
 }
 
 /* ------------------------------------------------------------- account */
@@ -1084,10 +1275,17 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       }
       await busy(btn, 'Signing in…', () => account.signIn($('a-login').value.trim(), $('a-pass').value));
       toast(`Signed in as ${account.current().username || account.current().email}`);
-      await account.syncNow().catch(() => {});
-      if (after) return after();
-      if (!S.pl && S.playlists[0]) await usePlaylist(S.playlists[0]);
-      go(S.pl ? watchPath() : '/settings/add', { replace: true });
+      if (after) {
+        await account.syncNow().catch(() => {});
+        return after();
+      }
+      if (S.pl) {
+        account.syncNow().catch(() => {});
+        return go(watchPath(), { replace: true });
+      }
+      // The library and the playlist load behind the home screen, not in front of it.
+      loadInBackground();
+      go('/home', { replace: true });
     } catch (x) {
       err.innerHTML = esc(x.message);
       if (x.code === 'unverified') {
@@ -1213,16 +1411,17 @@ async function handleRoute() {
     home();
     try {
       const u = await account.verify(q.token);
-      await account.syncNow().catch(() => {});
-      if (!S.pl && S.playlists[0]) await usePlaylist(S.playlists[0]);
+      // The library and the playlist load while this screen is read.
+      if (!S.pl) loadInBackground();
+      else account.syncNow().catch(() => {});
       history.replaceState({ depth: 0 }, '', '/account');
       const sh = sheet(
         'account',
         `<h1><img src="/icon.svg" alt="">Email confirmed ✓</h1>
         <p class="sub">You're signed in as <strong>${esc(u.username || u.email)}</strong>. Your playlists and favorites will now follow you to every screen you sign in on.</p>
-        <div class="actions"><button class="btn primary" id="v-go">${S.pl ? 'Start watching' : 'Add your playlist'}</button></div>`,
+        <div class="actions"><button class="btn primary" id="v-go">Continue</button></div>`,
       );
-      sh.querySelector('#v-go').onclick = () => go(S.pl ? watchPath() : '/settings/add', { replace: true });
+      sh.querySelector('#v-go').onclick = () => go(S.playing ? watchPath() : '/home', { replace: true });
     } catch (x) {
       history.replaceState({ depth: 0 }, '', '/account');
       openAccount({ note: esc(x.message) });
@@ -1358,10 +1557,13 @@ function render(full) {
   const [view, arg] = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
   if (signInFirst() && view !== 'account') return go(signInPath(), { replace: true });
   const needsPlaylist = ['watch', 'channels', 'favorites', 'recent', 'search', 'guide', undefined].includes(view);
+  // Channels still on their way: the home screen says so, a list would look empty.
+  if (needsPlaylist && HOME.loading) return go('/home', { replace: true });
   if (needsPlaylist && !S.pl) return go('/settings/add', { replace: true });
   switch (view) {
     case undefined:
     case 'watch':
+      if (!S.playing) return go('/home', { replace: true });
       closeAll();
       if (S.playing) history.replaceState(history.state, '', watchPath());
       return;
@@ -1382,8 +1584,14 @@ function render(full) {
       const q = u.searchParams.get('q');
       return go(q ? `/channels?q=${encodeURIComponent(q)}` : '/channels', { replace: true });
     }
+    case 'home':
+      return openHome();
     case 'guide':
       G.q = u.searchParams.get('q') || '';
+      // ?only=favorites, else what was chosen last time, else what the list was showing.
+      G.favs = u.searchParams.has('only')
+        ? u.searchParams.get('only') === 'favorites'
+        : store.prefs.read('guideFavs', false) || (S.mode === 'list' && S.group === FAV);
       return openGuide();
     case 'settings':
       return arg === 'add' ? openSetup(!S.playlists.length) : openSettings();
@@ -1470,7 +1678,7 @@ function navAct(act) {
 // A click on the dimmed picture around a sheet closes it, unless the sheet is
 // the only place to be (signing in on hdtilt.com, or the first playlist).
 $('sheet').addEventListener('click', (e) => {
-  if (e.target !== $('sheet') || !S.pl || signInFirst()) return;
+  if (e.target !== $('sheet') || !S.pl || signInFirst() || onHome()) return;
   closeToPicture();
 });
 
@@ -1569,6 +1777,7 @@ addEventListener('keydown', (e) => {
     return syncNav();
   }
   if (S.mode === 'sheet') {
+    if ($('sheet').dataset.screen === 'home' && homeKey(e)) return;
     if (e.key === 'ArrowUp' && !(e.target instanceof HTMLInputElement) && e.target.closest?.('.card') == null)
       return focusNav();
     if (e.key === 'Escape' || e.key === 'GoBack' || BACK_CODES.has(e.keyCode)) {
@@ -1580,9 +1789,29 @@ addEventListener('keydown', (e) => {
   const k = e.key;
   const back = k === 'Escape' || k === 'GoBack' || k === 'BrowserBack' || (BACK_CODES.has(e.keyCode) && !typing);
 
+  // The guide's Favorites switch, one Up above the first row. OK is the
+  // button's own click; the arrows lead on to the filter, the nav or the grid.
+  if (S.mode === 'guide' && e.target.id === 'gfav') {
+    if (k === 'Enter' || k === ' ') return;
+    if (k === 'ArrowDown' || back) e.target.blur();
+    else if (k === 'ArrowRight') $('gq').focus();
+    else if (k === 'ArrowUp') {
+      e.target.blur();
+      focusNav();
+    } else return;
+    e.preventDefault();
+    return;
+  }
   if (typing && e.target.id === 'gq') {
     if (k === 'ArrowDown' || k === 'Enter') {
       e.target.blur();
+      e.preventDefault();
+    } else if (k === 'ArrowUp') {
+      e.target.blur();
+      focusNav();
+      e.preventDefault();
+    } else if (k === 'ArrowLeft' && e.target.selectionStart === 0 && e.target.selectionEnd === 0) {
+      $('gfav').focus();
       e.preventDefault();
     } else if (back) {
       e.target.blur();
@@ -1599,6 +1828,10 @@ addEventListener('keydown', (e) => {
       e.target.blur();
       S.pane = 'channels';
       renderChannels(true);
+      e.preventDefault();
+    } else if (k === 'ArrowUp') {
+      e.target.blur();
+      focusNav();
       e.preventDefault();
     } else if (back) {
       // Esc in the filter clears it; a second Esc leaves the list.
@@ -1660,7 +1893,9 @@ addEventListener('keydown', (e) => {
 
   if (S.mode === 'list') {
     const atTop = S.pane === 'groups' ? S.groupFocus === 0 : S.focus === 0 || !S.view.length;
-    if (k === 'ArrowUp' && atTop) focusNav();
+    // Above the first channel is the filter (a remote has no / key), above that the nav.
+    if (k === 'ArrowUp' && atTop && S.pane === 'channels') $('q')?.focus();
+    else if (k === 'ArrowUp' && atTop) focusNav();
     else if (k === 'ArrowUp') moveFocus(-1);
     else if (k === 'ArrowDown') moveFocus(1);
     else if (k === 'PageUp' || k === 'ChannelUp') moveFocus(-8);
@@ -1697,7 +1932,7 @@ addEventListener('keydown', (e) => {
   }
 
   if (S.mode === 'guide') {
-    if (k === 'ArrowUp' && G.row === 0) focusNav();
+    if (k === 'ArrowUp' && G.row === 0) $('gfav').focus();
     else if (k === 'ArrowUp') guideMove(-1, 0);
     else if (k === 'ArrowDown') guideMove(1, 0);
     else if (k === 'PageUp' || k === 'ChannelUp') guideMove(-8, 0);
