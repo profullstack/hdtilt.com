@@ -17,6 +17,7 @@ import { groupsOf, loadSource } from '../core/sources.js';
 import { b64urlDecode, proxyPath } from '../core/util.js';
 import { VERSION } from '../version.js';
 import { createAccounts } from './accounts.js';
+import { withFooter } from './footer.js';
 import { handleRpc } from './mcp.js';
 import { createRemuxer, hasFfmpeg } from './remux.js';
 
@@ -448,8 +449,9 @@ export function createApp(opts = {}) {
       file = join(WEB_DIR, 'index.html');
     }
     try {
-      const body = await readFile(file);
+      let body = await readFile(file);
       const ext = extname(file);
+      if (file === join(WEB_DIR, 'index.html')) body = await withFooter(body.toString('utf8'));
       res.writeHead(200, {
         'content-type': TYPES[ext] || 'application/octet-stream',
         // Content-named files never change; the page and the worker always revalidate.
