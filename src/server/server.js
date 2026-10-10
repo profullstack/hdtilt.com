@@ -387,7 +387,12 @@ export function createApp(opts = {}) {
       const ext = extname(file);
       res.writeHead(200, {
         'content-type': TYPES[ext] || 'application/octet-stream',
-        'cache-control': ext === '.html' || file.endsWith('sw.js') ? 'no-cache' : 'public, max-age=3600',
+        // Content-named files never change; the page and the worker always revalidate.
+        'cache-control': /-[a-z0-9]{8,}\.(js|css)$/i.test(file)
+          ? 'public, max-age=31536000, immutable'
+          : ext === '.html' || file.endsWith('sw.js') || ext === '.webmanifest'
+            ? 'no-cache'
+            : 'public, max-age=3600',
       });
       res.end(body);
     } catch {
