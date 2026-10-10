@@ -20,7 +20,18 @@
   <div id="numentry" class="numentry" hidden></div>
 
   <!-- Channel banner: shown on every channel change, then fades. -->
-  <section id="banner" class="banner" hidden aria-live="polite"></section>
+  <section id="banner" class="banner" hidden>
+    <div id="banner-info" class="banner-info" aria-live="polite"></div>
+    <div id="controls" class="controls" role="toolbar" aria-label="Playback">
+      <button type="button" data-c="play" aria-label="Pause"></button>
+      <button type="button" data-c="mute" aria-label="Mute"></button>
+      <input type="range" id="vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+      <div class="seek" id="seekwrap" hidden><span id="t-cur">0:00</span><input type="range" id="seek" min="0" max="1" step="0.1" value="0" aria-label="Position"><span id="t-dur">0:00</span></div>
+      <span class="spacer"></span>
+      <button type="button" data-c="pip" aria-label="Picture in picture"></button>
+      <button type="button" data-c="fs" aria-label="Full screen"></button>
+    </div>
+  </section>
 
   <!-- Channel list: groups rail + channels. -->
   <section id="list" class="list" hidden>

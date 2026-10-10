@@ -910,3 +910,90 @@ label {
   gap: 0.8rem;
   align-items: center;
 }
+
+/* ---- player controls ------------------------------------------------------- */
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: stretch;
+}
+.banner-info {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1.4rem;
+  align-items: end;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.controls button {
+  width: 2.6rem;
+  height: 2.6rem;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  cursor: pointer;
+  flex: none;
+}
+.controls button:hover,
+.controls button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-ink);
+  outline: none;
+}
+.controls button[data-c="play"] {
+  width: 3rem;
+  height: 3rem;
+  background: var(--text);
+  color: #05080c;
+}
+.controls svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: currentColor;
+}
+.controls input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+#vol {
+  width: 7rem;
+}
+.controls .seek {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.controls .seek input {
+  flex: 1;
+  min-width: 0;
+}
+.controls .spacer {
+  flex: 1;
+}
+.controls .seek:not([hidden]) + .spacer {
+  display: none;
+}
+@media (max-width: 700px) {
+  .banner-info {
+    grid-template-columns: auto 1fr;
+  }
+  #vol {
+    width: 5rem;
+  }
+  .controls button {
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+}
