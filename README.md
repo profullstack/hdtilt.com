@@ -44,9 +44,11 @@ On hdtilt.com an account comes first: sign up (username, email, password), confi
 curl -fsSL https://hdtilt.com/install.sh | sh
 ```
 
-That installs the `hdtilt` command with bun, or with npm (Node >= 22.6), into `~/.local` when the
-global prefix needs root. On a Linux desktop it also puts the desktop app (AppImage) in `~/.local`
-with a menu entry; pass `sh -s -- --cli-only` to skip it, or `--desktop` to force it. Re-run to upgrade.
+That installs the `hdtilt` command into `~/.local` (no root). It uses your Node 22+ if you have
+one, otherwise it fetches an official Node build (checksum verified) into `~/.local/share/hdtilt`.
+Re-run it to upgrade; `sh -s -- --version X` pins a release; remove it with
+`sh ~/.local/share/hdtilt/uninstall.sh`. The desktop app (AppImage, deb, dmg, exe) is on the
+[releases page](https://github.com/profullstack/hdtilt.com/releases/latest).
 Or install the package yourself:
 
 ```sh
