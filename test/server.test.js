@@ -51,6 +51,12 @@ describe('API', () => {
   it('keeps no playlists in public mode', async () => {
     expect((await fetch(at(pub, '/api/playlists'))).status).toBe(404);
   });
+  it('serves the installer as a shell script', async () => {
+    const res = await fetch(at(pub, '/install.sh'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/x-sh');
+    expect((await res.text()).startsWith('#!/bin/sh')).toBe(true);
+  });
   it('serves the app shell for unknown routes', async () => {
     const res = await fetch(at(local, '/some/route'));
     expect(res.headers.get('content-type')).toContain('text/html');

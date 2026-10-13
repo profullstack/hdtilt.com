@@ -41,6 +41,15 @@ On hdtilt.com an account comes first: sign up (username, email, password), confi
 ## Install
 
 ```sh
+curl -fsSL https://hdtilt.com/install.sh | sh
+```
+
+That installs the `hdtilt` command with bun, or with npm (Node >= 22.6), into `~/.local` when the
+global prefix needs root. On a Linux desktop it also puts the desktop app (AppImage) in `~/.local`
+with a menu entry; pass `sh -s -- --cli-only` to skip it, or `--desktop` to force it. Re-run to upgrade.
+Or install the package yourself:
+
+```sh
 npm i -g hdtilt        # or: bunx hdtilt
 hdtilt add home http://provider.example/get.php?username=U&password=P&type=m3u_plus
 hdtilt now             # what's on

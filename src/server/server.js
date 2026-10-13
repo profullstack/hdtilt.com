@@ -35,6 +35,8 @@ const TYPES = {
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
+  // curl -fsSL https://hdtilt.com/install.sh | sh
+  '.sh': 'text/x-sh; charset=utf-8',
 };
 
 // Some providers only answer players they recognise. Overridable.
