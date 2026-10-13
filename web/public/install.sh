@@ -1,168 +1,159 @@
 #!/bin/sh
-# Install hdtilt, the open-source IPTV player (npm: hdtilt).
+# hdtilt installer.
 #
 #   curl -fsSL https://hdtilt.com/install.sh | sh
 #
-# Installs the `hdtilt` command (CLI, terminal guide, MCP and local web app)
-# with bun if present, otherwise npm (Node >= 22.6). When the global npm
-# prefix is not writable it installs into ~/.local instead of asking for sudo.
+# Installs hdtilt (commands: hdtilt) under your home directory. No root, no system
+# package manager, no system files touched. If this machine has no Node 22+,
+# an official Node build is fetched (checksum verified) into the same private directory
+# and used from there. Run this again to update. Remove with:
+#   sh ~/.local/share/hdtilt/uninstall.sh
 #
-# On a Linux desktop session it also installs the desktop app (AppImage) into
-# ~/.local, with a menu entry. Override with:
+#   sh -s -- --version X    install a specific release
+#   sh -s -- --prefix DIR   install root (default: ~/.local)
 #
-#   curl -fsSL https://hdtilt.com/install.sh | sh -s -- --cli-only
-#   curl -fsSL https://hdtilt.com/install.sh | sh -s -- --desktop
+# Listed in the W3BS catalog (https://w3bs.org/packages): `w3bs install hdtilt` runs
+# this same script and `w3bs update` re-runs it.
 #
-# Re-running upgrades both. Nothing here needs root.
-set -eu
+# Generated from the W3BS npm CLI installer template; keep the variables below in sync
+# with package.json. Nothing runs until the last line, so a truncated download is inert.
 
-PKG="hdtilt"
-REPO="profullstack/hdtilt.com"
+main() {
+  set -eu
+  PKG="hdtilt"
+  TOOL="hdtilt"
+  URL="https://hdtilt.com/install.sh"
+  NODE_MAJOR="22"
+  PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
+  VERSION=""
+  NODE_CHOICE="${INSTALL_NODE:-auto}"
 
-say() { printf '%s\n' "$*"; }
-warn() { printf 'hdtilt install: %s\n' "$*" >&2; }
-die() { printf 'hdtilt install: %s\n' "$*" >&2; exit 1; }
-have() { command -v "$1" >/dev/null 2>&1; }
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version) VERSION="${2:?--version needs a value}"; shift ;;
+      --prefix) PREFIX="${2:?--prefix needs a value}"; shift ;;
+      -h | --help) echo "Usage: curl -fsSL $URL | sh [-s -- --version X --prefix DIR]"; return 0 ;;
+      *) echo "$TOOL installer: unknown option $1" >&2; return 64 ;;
+    esac
+    shift
+  done
 
-desktop=auto
-for arg in "$@"; do
-  case "$arg" in
-    --cli-only) desktop=no ;;
-    --desktop) desktop=yes ;;
-    -h|--help)
-      say "Usage: install.sh [--cli-only | --desktop]"
-      say "  --cli-only  skip the desktop app even in a desktop session"
-      say "  --desktop   install the Linux desktop app (AppImage) even without a display"
-      exit 0
-      ;;
-    *) die "unknown option: $arg (try --help)" ;;
+  say() { printf '%s\n' "$*"; }
+  fail() { printf '%s installer: %s\n' "$TOOL" "$*" >&2; exit 1; }
+
+  case "$(uname -s)" in
+    Linux) OS=linux ;;
+    Darwin) OS=darwin ;;
+    *) fail "unsupported operating system $(uname -s); Linux and macOS are supported" ;;
   esac
-done
-
-fetch() { # url dest
-  if have curl; then curl -fsSL "$1" -o "$2"
-  elif have wget; then wget -qO "$2" "$1"
-  else die "needs curl or wget"
+  case "$(uname -m)" in
+    x86_64 | amd64) ARCH=x64 ;;
+    aarch64 | arm64) ARCH=arm64 ;;
+    *) fail "unsupported CPU $(uname -m)" ;;
+  esac
+  if command -v curl >/dev/null 2>&1; then
+    fetch() { curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2"; }
+  elif command -v wget >/dev/null 2>&1; then
+    fetch() { wget --https-only -q "$1" -O "$2"; }
+  else
+    fail "curl or wget is required"
   fi
+
+  SHARE="$PREFIX/share/$TOOL"
+  BIN="$PREFIX/bin"
+  mkdir -p "$SHARE" "$BIN"
+
+  node_major() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+  NODE=""
+  NODE_KIND=""
+  if [ "$NODE_CHOICE" != private ] && command -v node >/dev/null 2>&1 && [ "$(node_major node)" -ge "$NODE_MAJOR" ]; then
+    NODE="$(command -v node)"
+    NODE_KIND=system
+  elif [ -x "$SHARE/node/bin/node" ] && [ "$(node_major "$SHARE/node/bin/node")" -ge "$NODE_MAJOR" ]; then
+    NODE="$SHARE/node/bin/node"
+    NODE_KIND=private
+  fi
+  if [ -z "$NODE" ]; then
+    say "No Node $NODE_MAJOR+ here; fetching an official Node 24 into $SHARE/node ..."
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "$TMP"' EXIT
+    fetch "https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt" "$TMP/SHASUMS256.txt" || fail "cannot reach nodejs.org"
+    TARBALL="$(grep -o "node-v24\.[0-9.]*-$OS-$ARCH\.tar\.gz" "$TMP/SHASUMS256.txt" | head -n 1 || true)"
+    [ -n "$TARBALL" ] || fail "nodejs.org has no Node 24 build for $OS-$ARCH"
+    fetch "https://nodejs.org/dist/latest-v24.x/$TARBALL" "$TMP/$TARBALL" || fail "cannot download $TARBALL"
+    if command -v sha256sum >/dev/null 2>&1; then SUM="$(sha256sum "$TMP/$TARBALL" | cut -d ' ' -f 1)"
+    else SUM="$(shasum -a 256 "$TMP/$TARBALL" | cut -d ' ' -f 1)"; fi
+    grep -q "^$SUM  $TARBALL\$" "$TMP/SHASUMS256.txt" || fail "checksum mismatch for $TARBALL"
+    rm -rf "$SHARE/node" && mkdir -p "$SHARE/node"
+    tar -xzf "$TMP/$TARBALL" -C "$SHARE/node" --strip-components=1 || fail "cannot unpack $TARBALL"
+    NODE="$SHARE/node/bin/node"
+    NODE_KIND=private
+  fi
+  if [ "$NODE_KIND" = private ]; then NPM="$SHARE/node/bin/npm"; else NPM="$(dirname "$NODE")/npm"; [ -x "$NPM" ] || NPM=npm; fi
+  # npm runs package scripts with the Node in PATH; make that the chosen one.
+  PATH="$(dirname "$NODE"):$PATH"
+  export PATH
+
+  SPEC="$PKG"
+  [ -n "$VERSION" ] && SPEC="$PKG@$VERSION"
+  say "Installing $SPEC into $SHARE ..."
+  rm -rf "$SHARE/node_modules" "$SHARE/package.json" "$SHARE/package-lock.json"
+  cd "$SHARE"
+  printf '{ "name": "%s-install", "private": true }\n' "$TOOL" > package.json
+  "$NPM" install --silent --no-audit --no-fund --omit=dev "$SPEC" >/dev/null 2>&1 ||
+    "$NPM" install --no-audit --no-fund --omit=dev "$SPEC" || fail "npm could not install $SPEC"
+  PKG_DIR="$SHARE/node_modules/$PKG"
+  [ -f "$PKG_DIR/package.json" ] || fail "$SPEC installed but $PKG_DIR is missing"
+
+  # One shim per entry in the package's own `bin` map: a script, not a symlink, so the
+  # command always runs this copy with the chosen Node.
+  BINS="$("$NODE" -e '
+    const p = require(process.argv[1] + "/package.json");
+    const b = typeof p.bin === "string" ? { [p.name.split("/").pop()]: p.bin } : (p.bin || {});
+    for (const [k, v] of Object.entries(b)) if (/^[A-Za-z0-9._-]+$/.test(k)) console.log(k + "\t" + v);
+  ' "$PKG_DIR")"
+  [ -n "$BINS" ] || fail "$SPEC declares no commands"
+  PATHS="$SHARE"
+  NAMES=""
+  OLDIFS="$IFS"
+  IFS='
+'
+  for line in $BINS; do
+    name="${line%%	*}"
+    rel="${line#*	}"
+    entry="$PKG_DIR/$rel"
+    [ -f "$entry" ] || fail "$SPEC is missing $rel"
+    printf '#!/bin/sh\n# %s, installed by the %s installer (%s).\nexec "%s" "%s" "$@"\n' "$name" "$TOOL" "$URL" "$NODE" "$entry" > "$BIN/$name"
+    chmod 0755 "$BIN/$name"
+    PATHS="$PATHS
+$BIN/$name"
+    NAMES="$NAMES $name"
+  done
+  IFS="$OLDIFS"
+
+  INSTALLED="$("$NODE" -p "require('$PKG_DIR/package.json').version" 2>/dev/null || echo unknown)"
+  {
+    printf '{\n  "package": "%s",\n  "version": "%s",\n  "installer": "%s",\n' "$PKG" "$INSTALLED" "$URL"
+    printf '  "installedAt": "%s",\n  "node": "%s",\n  "paths": [\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NODE_KIND"
+    printf '%s\n' "$PATHS" | sed 's/.*/    "&",/' | sed '$ s/,$//'
+    printf '  ]\n}\n'
+  } > "$SHARE/manifest.json"
+  {
+    echo '#!/bin/sh'
+    echo "# Removes $TOOL. Written by its installer."
+    echo 'set -eu'
+    printf '%s\n' "$PATHS" | sed 's|.*|rm -rf "&"|'
+    echo "echo '$TOOL removed.'"
+  } > "$SHARE/uninstall.sh"
+  chmod 0755 "$SHARE/uninstall.sh"
+
+  say ""
+  say "Installed $PKG $INSTALLED:$NAMES (in $BIN)"
+  case ":$PATH:" in
+    *":$BIN:"*) ;;
+    *) say "Add $BIN to your PATH:  echo 'export PATH=\"$BIN:\$PATH\"' >> ~/.profile" ;;
+  esac
+  say "Update by running the installer again; remove with: sh $SHARE/uninstall.sh"
 }
 
-# ---------------------------------------------------------------- CLI
-
-say "Installing hdtilt (CLI, TUI, MCP and local web app)..."
-
-if have bun; then
-  # A fresh global dir has no package.json, and then `bun add -g` walks up
-  # and adds hdtilt to the first package.json above it (~/package.json, say).
-  global="${BUN_INSTALL:-$HOME/.bun}/install/global"
-  mkdir -p "$global"
-  [ -f "$global/package.json" ] || printf '{"dependencies":{}}\n' > "$global/package.json"
-  bun add -g "$PKG"
-  BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
-elif have npm && have node; then
-  ver=$(node -p 'process.versions.node' 2>/dev/null || echo 0.0.0)
-  major=${ver%%.*}
-  rest=${ver#*.}
-  minor=${rest%%.*}
-  if [ "$major" -lt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -lt 6 ]; }; then
-    die "Node >= 22.6 required (found v$ver). Upgrade Node or install bun: https://bun.sh"
-  fi
-  prefix=$(npm config get prefix)
-  modules="$prefix/lib/node_modules"
-  [ -d "$modules" ] || modules="$prefix/lib"
-  if [ -w "$modules" ] && [ -w "$prefix/bin" ]; then
-    npm install -g "$PKG"
-    BIN_DIR="$prefix/bin"
-  else
-    BIN_DIR="$HOME/.local/bin"
-    say "npm prefix $prefix is not writable; installing into $HOME/.local"
-    npm install -g --prefix "$HOME/.local" "$PKG"
-  fi
-else
-  die "needs bun (https://bun.sh) or Node >= 22.6 with npm (https://nodejs.org)"
-fi
-
-# The bin is a `#!/usr/bin/env node` script. With bun and no node on PATH,
-# point a small shim at bun instead (hdtilt runs on both).
-if [ -x "$BIN_DIR/hdtilt" ] && ! have node && have bun; then
-  pkg_dir="${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules/$PKG"
-  if [ -f "$pkg_dir/bin/hdtilt.js" ]; then
-    rm -f "$BIN_DIR/hdtilt"
-    printf '#!/bin/sh\nexec bun "%s/bin/hdtilt.js" "$@"\n' "$pkg_dir" > "$BIN_DIR/hdtilt"
-    chmod +x "$BIN_DIR/hdtilt"
-  fi
-fi
-
-# ---------------------------------------------------------- desktop app
-
-if [ "$desktop" = auto ]; then
-  desktop=no
-  if [ "$(uname -s)" = Linux ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${XDG_CURRENT_DESKTOP:-}" ]; }; then
-    desktop=yes
-  fi
-fi
-
-APP_DIR="$HOME/.local/share/hdtilt"
-desktop_done=""
-if [ "$desktop" = yes ]; then
-  if [ "$(uname -s)" != Linux ]; then
-    warn "the desktop app is installed by this script on Linux only; get it from https://github.com/$REPO/releases/latest"
-  elif [ "$(uname -m)" != x86_64 ]; then
-    warn "no AppImage for $(uname -m) yet; skipping the desktop app"
-  else
-    say ""
-    say "Installing the hdtilt desktop app (AppImage)..."
-    tag=""
-    if have curl; then
-      tag=$(curl -fsSI "https://github.com/$REPO/releases/latest" 2>/dev/null | tr -d '\r' | sed -n 's#^[Ll]ocation: .*/releases/tag/v##p')
-    fi
-    [ -n "$tag" ] || tag=$(npm view "$PKG" version 2>/dev/null || true)
-    if [ -z "$tag" ]; then
-      warn "could not find the latest release; skipping the desktop app"
-    else
-      mkdir -p "$APP_DIR" "$HOME/.local/bin" "$HOME/.local/share/applications" \
-        "$HOME/.local/share/icons/hicolor/scalable/apps"
-      tmp="$APP_DIR/.hdtilt.AppImage.part"
-      if fetch "https://github.com/$REPO/releases/download/v$tag/hdtilt-$tag.AppImage" "$tmp"; then
-        chmod +x "$tmp"
-        mv -f "$tmp" "$APP_DIR/hdtilt.AppImage"
-        fetch "https://hdtilt.com/icon.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/hdtilt.svg" || true
-        ln -sf "$APP_DIR/hdtilt.AppImage" "$HOME/.local/bin/hdtilt-desktop"
-        cat > "$HOME/.local/share/applications/hdtilt.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=hdtilt
-Comment=Open-source IPTV player with a TV guide
-Exec=$APP_DIR/hdtilt.AppImage %U
-Icon=hdtilt
-Terminal=false
-Categories=AudioVideo;Video;Player;TV;
-EOF
-        have update-desktop-database && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
-        desktop_done="$tag"
-      else
-        rm -f "$tmp"
-        warn "could not download the AppImage for v$tag; skipping the desktop app"
-      fi
-    fi
-  fi
-fi
-
-# ------------------------------------------------------------- summary
-
-say ""
-if have hdtilt; then
-  say "$(hdtilt --version 2>/dev/null || echo hdtilt) installed."
-else
-  say "hdtilt installed to $BIN_DIR, which is not on your PATH. Add it:"
-  say "  export PATH=\"$BIN_DIR:\$PATH\""
-fi
-if [ -n "$desktop_done" ]; then
-  say "Desktop app v$desktop_done installed: $APP_DIR/hdtilt.AppImage (menu entry \"hdtilt\", or run hdtilt-desktop)."
-  say "If it will not start, your system may need libfuse2 for AppImages."
-fi
-say ""
-say "Next:"
-say "  hdtilt add home 'http://provider.example/get.php?username=U&password=P&type=m3u_plus'"
-say "  hdtilt now      # what is on"
-say "  hdtilt tui      # browse and play (needs mpv or VLC)"
-say "  hdtilt serve    # the web app on http://127.0.0.1:8930"
+main "$@"
