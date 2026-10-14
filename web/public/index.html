@@ -43,6 +43,15 @@
     </div>
   </section>
 
+  <!-- Movies & Shows: categories + titles; a show opens into its episodes. -->
+  <section id="vod" class="list vod" hidden>
+    <nav id="vod-rail" class="groups" aria-label="Movies and shows categories"></nav>
+    <div class="channels-wrap">
+      <header id="vod-head" class="list-head"></header>
+      <div id="vod-items" class="channels" role="listbox" tabindex="-1"></div>
+    </div>
+  </section>
+
   <!-- TV guide. -->
   <section id="guide" class="guide" hidden>
     <header id="guide-info" class="guide-info"></header>
@@ -55,6 +64,7 @@
     <span class="brand"><img src="/icon.svg" alt="">hdtilt</span>
     <div class="nav-items">
       <button type="button" data-act="live">Live TV</button>
+      <button type="button" data-act="vod">Movies &amp; Shows</button>
       <button type="button" data-act="guide">TV Guide</button>
       <button type="button" data-act="favs">★ Favorites</button>
       <button type="button" data-act="recent">Recent</button>

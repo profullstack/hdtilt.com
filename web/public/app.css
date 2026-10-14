@@ -1105,3 +1105,115 @@ body.gated .nav-items button:not(#nav-account) {
   --pfs-footer-muted: var(--dim);
   border-top: 0;
 }
+
+/* ---- Movies & Shows ---------------------------------------------------------- */
+.list.vod {
+  width: min(100%, 72rem);
+}
+.vod .channels-wrap {
+  max-width: none;
+}
+/* A wide screen keeps the categories in view; a phone slides them in (☰ or ◀). */
+@media (min-width: 701px) {
+  .list.vod:not(.groups-open) .groups {
+    width: 15rem;
+    padding: 1.4rem 0.6rem;
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+  }
+  .vod-cats {
+    display: none;
+  }
+}
+.vod-kinds {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0 0.3rem 0.8rem;
+}
+.vod-kinds .chip {
+  flex: 1;
+  width: auto;
+  justify-content: center;
+  padding: 0.45rem 0.6rem;
+  border-radius: 999px;
+}
+.vod-kinds .chip.cur {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.groups .vod-kinds button.focus {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.vod-plot {
+  width: 100%;
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.85rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vod-seasons {
+  width: 100%;
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.vod-seasons .chip.cur {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.row.vrow {
+  grid-template-columns: 2.4rem 1fr auto;
+}
+.row.vrow.ep {
+  grid-template-columns: 4.6rem 1fr;
+}
+.row.vrow.ep .no {
+  text-align: left;
+  font-size: 0.85rem;
+}
+.logo.poster {
+  width: 2.4rem;
+  height: 3.4rem;
+  max-height: calc(var(--row) - 10px);
+  border-radius: 6px;
+}
+.row .logo.poster {
+  width: 2.4rem;
+  height: calc(var(--row) - 12px);
+}
+.logo.poster img {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.banner .logo.poster {
+  width: 3.6rem;
+  height: 5.2rem;
+}
+.row .go {
+  color: var(--dim);
+  font-size: 1.1rem;
+  padding: 0 0.4rem;
+}
+.vod .empty .btn {
+  margin-left: 0.5rem;
+}
+@media (max-width: 700px) {
+  .row.vrow {
+    grid-template-columns: 2.2rem 1fr auto;
+  }
+  .row.vrow.ep {
+    grid-template-columns: 4.2rem 1fr;
+  }
+}
