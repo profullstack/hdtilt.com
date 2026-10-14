@@ -796,6 +796,7 @@ function renderGroups() {
     b.onclick = () => pickGroup(i);
     nav.append(b);
   });
+  railPager(nav);
   nav.querySelector('.focus')?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -1049,6 +1050,7 @@ function renderVodRail() {
     b.onclick = () => pickVodRail(i);
     rail.append(b);
   });
+  railPager(rail);
   rail.querySelector('.focus')?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -2571,6 +2573,87 @@ addEventListener('resize', () => {
 });
 
 // For tests and the curious: the whole app state, read-only by convention.
+/* ---------------------------------------------------------- page buttons */
+// Silk on a Fire TV drives the page with a pointer, and that pointer cannot
+// scroll a list inside the page (the page itself never scrolls), so a long
+// list could only be reached by filtering. Big ▲ ▼ buttons page through
+// every list instead. On by default on a TV browser; ?pager=on|off overrides
+// that on any device, and is remembered.
+
+{
+  const asked = new URLSearchParams(location.search).get('pager');
+  if (asked === 'on' || asked === 'off') store.prefs.write('pager', asked);
+}
+const pagerOn = store.prefs.read('pager', isTv ? 'on' : 'off') === 'on';
+document.body.classList.toggle('pager-on', pagerOn);
+
+const PAGER_HTML =
+  '<button type="button" data-page="-1" tabindex="-1" aria-label="Page up">▲</button>' +
+  '<button type="button" data-page="1" tabindex="-1" aria-label="Page down">▼</button>';
+
+function pager(cls, onPage) {
+  const p = el('div', `pager ${cls}`, PAGER_HTML);
+  p.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-page]');
+    if (!b) return;
+    e.stopPropagation();
+    onPage(Number(b.dataset.page));
+  });
+  return p;
+}
+
+/** A list of rows: scroll one screen, and the remote's focus lands on the first row in view. */
+function pageList(box, dir, setFocus) {
+  const rp = rowPx();
+  const rows = Math.max(1, Math.floor(box.clientHeight / rp) - 1);
+  box.scrollTop = Math.max(0, box.scrollTop + dir * rows * rp);
+  setFocus(Math.ceil(box.scrollTop / rp));
+}
+
+/** A rail of groups or categories (re-rendered often, so it gets a fresh pair each time). */
+function railPager(rail) {
+  if (!pagerOn) return;
+  rail.append(pager('rail-pager', (dir) => rail.scrollBy({ top: dir * rail.clientHeight * 0.8 })));
+}
+
+if (pagerOn) {
+  $('list')
+    .querySelector('.channels-wrap')
+    .append(
+      pager('rows-pager', (dir) =>
+        pageList($('channels'), dir, (i) => {
+          if (!S.view.length) return;
+          S.pane = 'channels';
+          S.focus = Math.min(S.view.length - 1, i);
+          renderChannels();
+        }),
+      ),
+    );
+  $('vod')
+    .querySelector('.channels-wrap')
+    .append(
+      pager('rows-pager', (dir) =>
+        pageList($('vod-items'), dir, (i) => {
+          if (!V.view.length) return;
+          V.pane = 'items';
+          V.focus = Math.min(V.view.length - 1, i);
+          renderVodItems();
+        }),
+      ),
+    );
+  $('guide').append(
+    pager('rows-pager guide-pager', (dir) => {
+      // The view and the focused row move together, a screen at a time.
+      const { grid, rowH } = guideDims();
+      const n = Math.max(1, Math.floor(grid.clientHeight / rowH) - 2);
+      const last = Math.max(0, G.list.length - 1);
+      G.row = Math.min(last, Math.max(0, G.row + dir * n));
+      G.top = Math.min(last, Math.max(0, G.top + dir * n));
+      renderGuide();
+    }),
+  );
+}
+
 globalThis.hdtilt = S;
 globalThis.hdtiltVod = V;
 boot();
