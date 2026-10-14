@@ -14,6 +14,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VERSION } from '../version.js';
+import { fold } from './match.js';
 
 const API = 'https://api.opensubtitles.com/api/v1';
 const SEARCH_TTL = 3600_000;
@@ -121,16 +122,37 @@ export function resultOf(d) {
     cds: Number(a.nb_cd) || 1,
     title: fd.parent_title ? `${fd.parent_title} S${fd.season_number}E${fd.episode_number}` : fd.title || fd.movie_name,
     year: fd.year || undefined,
+    // The film's or the show's own name, for telling "Breaking Bad" from "The Bad Guys: Breaking In".
+    name: fd.parent_title || fd.title || fd.movie_name || '',
   };
 }
 
-/** Exact-file matches first, then one-file subtitles, then the most downloaded. */
-export function rankResults(list) {
+/**
+ * How well a result's name fits what was asked by title: 2 = the same name,
+ * 1 = every word in it, 0 = neither. A text search matches loosely.
+ */
+export function nameFit(name, wanted) {
+  const n = fold(name).trim();
+  const w = fold(wanted).trim();
+  if (!w) return 0;
+  if (n === w || n.replace(/^the /, '') === w.replace(/^the /, '')) return 2;
+  return w.split(' ').every((x) => ` ${n} `.includes(` ${x} `)) ? 1 : 0;
+}
+
+/**
+ * Exact-file matches first, then (when asked by title) the right film or show,
+ * then one-file subtitles, then the most downloaded.
+ * @param {{ title?: string, year?: number }} [wanted] the cleaned title asked for, if no id was
+ */
+export function rankResults(list, wanted = null) {
+  const fit = (r) =>
+    wanted?.title ? nameFit(r.name, wanted.title) * 2 + (wanted.year && r.year === wanted.year ? 1 : 0) : 0;
   return list
     .filter((r) => r.fileId)
     .sort(
       (a, b) =>
         b.hashMatch - a.hashMatch ||
+        fit(b) - fit(a) ||
         (a.cds > 1) - (b.cds > 1) ||
         b.trusted - a.trusted ||
         a.aiTranslated - b.aiTranslated ||
@@ -311,7 +333,10 @@ export function createSubtitles({
     const qs = searchParams(ask);
     const have = searches.get(qs);
     if (have && Date.now() - have.at < SEARCH_TTL) return have.p;
-    const p = call(`/subtitles?${qs}`).then((j) => rankResults((j.data || []).map(resultOf)));
+    const byTitle = !ask.tmdbId && !ask.imdbId && ask.title;
+    const wanted = byTitle ? { ...cleanTitle(ask.title), ...(ask.year ? { year: Number(ask.year) } : {}) } : null;
+    if (wanted && ask.season != null) wanted.year = 0;
+    const p = call(`/subtitles?${qs}`).then((j) => rankResults((j.data || []).map(resultOf), wanted));
     searches.set(qs, { at: Date.now(), p });
     p.catch(() => searches.delete(qs));
     while (searches.size > 500) searches.delete(searches.keys().next().value);

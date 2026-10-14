@@ -81,6 +81,29 @@ describe('results', () => {
   });
 });
 
+describe('asked by title', () => {
+  const ep = (id, show, downloads) =>
+    resultOf({
+      id: String(id),
+      attributes: {
+        download_count: downloads,
+        files: [{ file_id: id }],
+        feature_details: { parent_title: show, season_number: 1, episode_number: 1 },
+      },
+    });
+  it('puts the show asked for above a looser match (seen on the real API)', () => {
+    const list = [ep(1, 'The Bad Guys: Breaking In', 9000), ep(2, 'Breaking Bad', 10)];
+    expect(rankResults(list, { title: 'Breaking Bad' }).map((r) => r.fileId)).toEqual([2, 1]);
+    // Asked by id, the order is OpenSubtitles' own signals.
+    expect(rankResults(list).map((r) => r.fileId)).toEqual([1, 2]);
+  });
+  it('prefers the year asked for', () => {
+    const film = (id, year) =>
+      resultOf({ id: String(id), attributes: { files: [{ file_id: id }], feature_details: { title: 'Heat', year } } });
+    expect(rankResults([film(1, 1986), film(2, 1995)], { title: 'Heat', year: 1995 })[0].fileId).toBe(2);
+  });
+});
+
 describe('WebVTT', () => {
   it('turns SubRip into WebVTT', () => {
     const v = toVtt(`﻿${SRT.replace(/\n/g, '\r\n')}`);
