@@ -58,6 +58,15 @@ export function vodInfo(url) {
   return json(`/hls/${b64urlEncode(url)}/info.json`);
 }
 
+/** Subtitles for a film or an episode (OpenSubtitles, through the server). */
+export function subtitles(ask) {
+  return json('/api/subtitles', ask);
+}
+
+/** A subtitle file as WebVTT, its cues moved by `shift` seconds. */
+export const subtitleUrl = (fileId, shift = 0) =>
+  `/subs/${Number(fileId)}.vtt${shift ? `?shift=${Math.round(shift * 1000) / 1000}` : ''}`;
+
 export function guide(url, channels, from, to) {
   const slim = channels.map((c) => ({ id: c.id, name: c.name, tvgId: c.tvgId }));
   return json('/api/guide', { url, channels: slim, from, to }).then((r) => r.programmes);

@@ -62,9 +62,11 @@ export function resumeAt(id) {
 export async function remember(plId, item, pos, dur, show = null) {
   if (!plId || !item) return;
   const slim = { id: item.id, name: item.name, url: item.url, kind: item.kind, logo: item.logo, group: item.group };
+  if (item.year) slim.year = item.year;
+  if (item.tmdbId) slim.tmdbId = item.tmdbId;
   if (item.season != null) Object.assign(slim, { season: item.season, episode: item.episode });
   const entry = { item: slim, pos: Math.floor(pos || 0), dur: Math.floor(dur || 0), at: Date.now() };
-  if (show) entry.show = { seriesId: show.seriesId, name: show.name, logo: show.logo };
+  if (show) entry.show = { seriesId: show.seriesId, name: show.name, logo: show.logo, tmdbId: show.tmdbId };
   V.history = [entry, ...V.history.filter((x) => x.item.id !== item.id)].slice(0, 60);
   await store.set(hKey(plId), V.history);
 }

@@ -28,6 +28,11 @@ Watching
   hdtilt play <channel> [--at <iso-time>] [--player mpv|vlc|ffplay]
   hdtilt fav <channel>             toggle a favorite
 
+Subtitles (OpenSubtitles; a free API key from opensubtitles.com/consumers)
+  hdtilt subs --key <api-key> [--user <u> --pass <p>]   save the key (and an account)
+  hdtilt subs <title> [--year Y] [--season S --episode E] [--lang en,fr] [--tmdb id]
+  hdtilt subs <title> ... --get <n> [-o file.vtt]        download the nth result
+
 Account (sync playlists and favorites with hdtilt.com)
   hdtilt login [--manual]          sign in through the browser (OAuth 2.1 + PKCE)
   hdtilt whoami | sync | logout
@@ -55,6 +60,14 @@ const { values: o, positionals } = parseArgs({
     from: { type: 'string' },
     at: { type: 'string' },
     player: { type: 'string' },
+    key: { type: 'string' },
+    year: { type: 'string' },
+    season: { type: 'string' },
+    episode: { type: 'string' },
+    lang: { type: 'string' },
+    tmdb: { type: 'string' },
+    get: { type: 'string' },
+    out: { type: 'string', short: 'o' },
     port: { type: 'string' },
     host: { type: 'string' },
     public: { type: 'boolean' },
@@ -232,6 +245,49 @@ const commands = {
     await writeConfig(cfg);
     console.log(`${s.has(ch.id) ? '★ added' : 'removed'} ${ch.name}`);
     await (await import('../src/cli/sync.js')).pushQuietly();
+  },
+  async subs() {
+    const { createSubtitles, credentialsFrom } = await import('../src/core/subtitles.js');
+    const cfg = await readConfig();
+    if (o.key) {
+      cfg.opensubtitles = { apiKey: o.key, ...(o.user && o.pass ? { username: o.user, password: o.pass } : {}) };
+      await writeConfig(cfg);
+      return console.log(`OpenSubtitles key saved${o.user ? ` (account ${o.user})` : ''}`);
+    }
+    const subs = createSubtitles(credentialsFrom(process.env, cfg));
+    if (!subs.enabled)
+      throw new Error('no OpenSubtitles key: hdtilt subs --key <api-key> (free at opensubtitles.com/consumers)');
+    const title = args.join(' ');
+    if (!title && !o.tmdb) throw new Error('usage: hdtilt subs <title> [--season S --episode E] [--lang en]');
+    const items = await subs.search({
+      title,
+      year: Number(o.year) || undefined,
+      tmdbId: o.tmdb,
+      season: o.season,
+      episode: o.episode,
+      languages: o.lang || 'en',
+    });
+    if (o.get) {
+      const n = Number(o.get);
+      const r = items[n - 1];
+      if (!r) throw new Error(`no result ${o.get}; there are ${items.length}`);
+      const { vtt, remaining } = await subs.download(r.fileId);
+      if (!o.out) return process.stdout.write(vtt);
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(o.out, vtt);
+      return console.error(`Saved ${o.out}${remaining != null ? ` (${remaining} downloads left today)` : ''}`);
+    }
+    const rows = items.slice(0, limit);
+    out(rows, () =>
+      rows.length
+        ? rows
+            .map(
+              (r, i) =>
+                `${String(i + 1).padStart(3)}. [${r.language}] ${r.release}  ⬇${r.downloads}${r.hearingImpaired ? ' CC' : ''}${r.trusted ? ' trusted' : ''}`,
+            )
+            .join('\n')
+        : 'No subtitles found',
+    );
   },
   async login() {
     const { signIn, sync } = await import('../src/cli/sync.js');

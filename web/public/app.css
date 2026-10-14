@@ -1282,3 +1282,150 @@ body.gated .nav-items button:not(#nav-account) {
   border-radius: 0.8rem;
   color: var(--text);
 }
+
+/* ---------------------------------------------------------- subtitles */
+.controls button.on {
+  background: var(--text);
+  color: #05080c;
+}
+#video::cue {
+  font-size: 1.4em;
+  line-height: 1.3;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 2px #000;
+}
+.subs {
+  position: absolute;
+  right: 1.6rem;
+  bottom: 7.5rem;
+  z-index: 6;
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: min(70vh, 34rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+.subs header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.subs h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.subs-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.subs select {
+  flex: 1;
+  min-width: 10rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.subs select:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.subs-sync {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.subs-sync button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.subs-sync button:hover,
+.subs-sync button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-ink);
+  outline: none;
+}
+.subs-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.subs-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.subs-row:hover,
+.subs-row:focus-visible {
+  background: var(--focus);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.subs-row.cur {
+  background: rgba(56, 189, 248, 0.12);
+}
+.subs-row.cur > .subs-rel::before {
+  content: "✓ ";
+  color: var(--accent);
+}
+.subs-rel {
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+.subs-meta {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  color: var(--dim);
+  font-size: 0.78rem;
+}
+.subs-meta .tag {
+  font-size: 0.68rem;
+}
+.subs-status,
+.subs-credit {
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.82rem;
+}
+.subs-credit a {
+  color: var(--dim);
+}
+@media (max-width: 700px) {
+  .subs {
+    left: 1rem;
+    right: 1rem;
+    width: auto;
+    bottom: 8.5rem;
+    max-height: 60vh;
+  }
+}

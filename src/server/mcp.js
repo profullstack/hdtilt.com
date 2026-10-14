@@ -3,6 +3,7 @@
 import { addPlaylist, channelsFor, findChannels, readConfig } from '../core/config.js';
 import { guideFor, loadGuide, nowNextFor } from '../core/guide.js';
 import { catchupUrl, groupsOf, loadSource } from '../core/sources.js';
+import { createSubtitles, credentialsFrom } from '../core/subtitles.js';
 import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
 
@@ -116,7 +117,39 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: 'find_subtitles',
+    description:
+      'Subtitles for a film or an episode, from OpenSubtitles. Give a title (a provider name like "EN - Film (1999) 4K" is cleaned up) or a tmdbId; for an episode add season and episode (title/tmdbId are then the show). Best match first; fetch one with fetch_subtitle.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        year: { type: 'number' },
+        tmdbId: { type: 'number', description: 'The film, or for an episode the show' },
+        season: { type: 'number' },
+        episode: { type: 'number' },
+        languages: { type: 'string', description: 'Comma-separated codes, e.g. "en,fr"', default: 'en' },
+        limit: { type: 'number', default: 20 },
+      },
+    },
+  },
+  {
+    name: 'fetch_subtitle',
+    description:
+      'One subtitle file as WebVTT text, by the fileId find_subtitles gave. Spends one of the daily downloads.',
+    inputSchema: { type: 'object', properties: { fileId: { type: 'number' } }, required: ['fileId'] },
+  },
 ];
+
+// The server passes its own (ctx.subtitles); stdio reads the local config.
+let localSubs = null;
+async function subtitlesOf(ctx) {
+  if (ctx.subtitles !== undefined) return ctx.subtitles;
+  localSubs ??= readConfig().then((cfg) => createSubtitles(credentialsFrom(process.env, cfg)));
+  const s = await localSubs;
+  return s.enabled ? s : null;
+}
 
 const fmt = (t) => new Date(t).toISOString().replace(/:\d\d\.\d{3}Z$/, 'Z');
 const brief = (c) => ({
@@ -238,6 +271,28 @@ export async function callTool(name, a = {}, ctx = {}) {
       if (r.categories) return r;
       return { total: r.total ?? r.items.length, items: r.items.slice(0, limit) };
     }
+    case 'find_subtitles': {
+      const subs = await subtitlesOf(ctx);
+      if (!subs) throw new Error('subtitles are not set up: hdtilt subs --key <api-key>');
+      if (!a.title && !a.tmdbId) throw new Error('give title or tmdbId');
+      const items = await subs.search({
+        title: a.title,
+        year: a.year,
+        tmdbId: a.tmdbId,
+        season: a.season,
+        episode: a.episode,
+        languages: a.languages || 'en',
+      });
+      return { total: items.length, items: items.slice(0, a.limit || 20) };
+    }
+    case 'fetch_subtitle': {
+      // hdtilt.com shares one daily allowance among everyone; the player fetches them there.
+      if (ctx.public) throw new Error('fetch subtitles in the player on this server; MCP can only find them here');
+      const subs = await subtitlesOf(ctx);
+      if (!subs) throw new Error('subtitles are not set up: hdtilt subs --key <api-key>');
+      const { vtt } = await subs.download(a.fileId);
+      return { fileId: Number(a.fileId), format: 'webvtt', text: vtt };
+    }
     default:
       throw new Error(`unknown tool ${name}`);
   }
@@ -260,7 +315,7 @@ export async function handleRpc(msg, ctx = {}) {
     }
     if (method === 'ping') return ok({});
     if (method === 'tools/list') {
-      const hidden = ctx.public ? new Set(['add_playlist', 'list_playlists']) : new Set();
+      const hidden = ctx.public ? new Set(['add_playlist', 'list_playlists', 'fetch_subtitle']) : new Set();
       return ok({ tools: TOOLS.filter((t) => !hidden.has(t.name)) });
     }
     if (method === 'tools/call') {

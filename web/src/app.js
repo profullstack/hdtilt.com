@@ -9,6 +9,7 @@ import { b64urlEncode, proxyPath } from '../../src/core/util.js';
 import * as account from './account.js';
 import * as api from './data.js';
 import * as store from './store.js';
+import { createSubs } from './subs.js';
 import * as vod from './vod.js';
 
 const { V } = vod;
@@ -57,6 +58,22 @@ const S = {
   catchup: null, // { programme } when playing an archive
   vod: null, // { item, show, offset, remux, duration } when playing a film or an episode
 };
+
+/* ------------------------------------------------------------ subtitles */
+
+const subs = createSubs({
+  video: $('video'),
+  panel: $('subs'),
+  now: () => S.vod && { item: S.vod.item, show: S.vod.show, offset: S.vod.offset },
+  onToggle: (open) => {
+    document.body.classList.toggle('subs-open', open);
+    if (!open) {
+      holdChrome();
+      if (!$('banner').hidden) updateControls();
+    }
+  },
+  toast: (t) => toast(t),
+});
 
 /* ---------------------------------------------------------------- boot */
 
@@ -239,6 +256,7 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
   if (S.vod) {
     saveVodPos();
     S.vod = null;
+    subs.detach();
   }
   if (S.playing && S.playing.id !== ch.id && S.playing.kind !== 'vod') S.previous = S.playing;
   S.playing = ch;
@@ -400,6 +418,8 @@ async function attachVod(video, target, mine, seekTo, watchStall, onError) {
     if (S.current !== mine) return att.destroy();
     S.attached = att;
     if (att.unplayable) return onError(att.unplayable);
+    // The subtitle picked for this title, shifted to where this session starts.
+    subs.attach();
     if (seekTo)
       video.addEventListener('loadedmetadata', () => S.current === mine && (video.currentTime = seekTo), {
         once: true,
@@ -599,6 +619,7 @@ const ICON = {
   vol: '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>',
   muted:
     '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z"/></svg>',
+  cc: '<svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg>',
   pip: '<svg viewBox="0 0 24 24"><path d="M19 7h-8v6h8V7zm2-4H3a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14z"/></svg>',
   fs: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
   unfs: '<svg viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>',
@@ -621,6 +642,10 @@ function updateControls() {
   ctl('mute').innerHTML = silent ? ICON.muted : ICON.vol;
   ctl('mute').setAttribute('aria-label', silent ? 'Unmute' : 'Mute');
   $('vol').value = String(silent ? 0 : v.volume);
+  ctl('cc').innerHTML = ICON.cc;
+  ctl('cc').hidden = !(S.vod && api.serverInfo.subtitles);
+  ctl('cc').classList.toggle('on', subs.on);
+  ctl('cc').setAttribute('aria-pressed', String(subs.on));
   ctl('pip').innerHTML = ICON.pip;
   ctl('pip').hidden = !document.pictureInPictureEnabled;
   ctl('fs').innerHTML = document.fullscreenElement ? ICON.unfs : ICON.fs;
@@ -683,6 +708,7 @@ $('controls').addEventListener('click', (e) => {
     } else v.muted = true;
   }
   if (c === 'fs') toggleFullscreen();
+  if (c === 'cc') subs.toggle();
   if (c === 'pip') {
     if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
     else v.requestPictureInPicture?.().catch(() => {});
@@ -737,6 +763,8 @@ function soundOn(e) {
 for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, soundOn, true);
 
 function hideChrome() {
+  // The subtitles panel sits on the banner: it stays up until it is closed.
+  if (subs.isOpen()) return;
   $('banner').hidden = true;
   navPinned = false;
   if (S.mode === 'tv') navFocus = -1;
@@ -2259,6 +2287,7 @@ function toast(text) {
 
 let lastTap = 0;
 $('video').addEventListener('click', () => {
+  if (subs.isOpen()) return subs.close();
   // The picture is behind everything: clicking it means "just the picture".
   if (S.mode !== 'tv') return closeToPicture();
   const now = Date.now();
@@ -2310,6 +2339,7 @@ function numberKey(d) {
 }
 
 addEventListener('keydown', (e) => {
+  if (subs.key(e)) return;
   if (navFocus >= 0 && !(e.target instanceof HTMLInputElement)) {
     const n = navButtons().length;
     const k = e.key;
@@ -2425,7 +2455,10 @@ addEventListener('keydown', (e) => {
     else if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'i' || k === 'Info') showBanner();
     else if (k === 'Enter' || k === '/')
       go(V.show && V.plId === S.pl?.id ? vod.vodPath() : V.cat ? vodListPath() : '/vod');
-    else if (k === 'n' || k === 'MediaTrackNext') {
+    else if ((k === 'c' || k === 'Subtitle') && api.serverInfo.subtitles) {
+      showBanner(false);
+      subs.open();
+    } else if (k === 'n' || k === 'MediaTrackNext') {
       const next = vod.nextEpisode(S.vod.show, S.vod.item);
       if (next) playVod(next, { start: 0, show: S.vod.show });
     } else if (k === 'f' || k === 'ColorF1Green' || /^\d$/.test(k)) handled = true;
