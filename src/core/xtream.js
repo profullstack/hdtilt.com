@@ -155,6 +155,15 @@ const yearOf = (...vs) => {
   return undefined;
 };
 
+/** A TMDB id, for subtitles: panels send it as a number, a string, or "0" for none. */
+const tmdbOf = (...vs) => {
+  for (const v of vs) {
+    const n = Number(String(v ?? '').trim());
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return undefined;
+};
+
 /** One movie as get_vod_streams lists it, in the shape the app shows. */
 export function movieOf(login, m, catName = new Map()) {
   return {
@@ -166,6 +175,7 @@ export function movieOf(login, m, catName = new Map()) {
     rating: num(m.rating) || undefined,
     year: yearOf(m.year, m.releasedate, m.name),
     added: num(m.added),
+    tmdbId: tmdbOf(m.tmdb, m.tmdb_id),
     url: movieUrl(login, m.stream_id, m.container_extension || 'mp4'),
     kind: 'vod',
   };
@@ -256,6 +266,7 @@ export async function seriesInfo(login, seriesId, fetchImpl = fetch) {
     genre: i.genre || undefined,
     rating: num(i.rating) || undefined,
     year: yearOf(i.releaseDate, i.release_date),
+    tmdbId: tmdbOf(i.tmdb, i.tmdb_id),
     episodes,
   };
 }

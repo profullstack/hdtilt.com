@@ -14,6 +14,7 @@ import { guideFor, loadGuide, nowNextFor } from '../core/guide.js';
 import { isPlaylist, rewritePlaylist } from '../core/hls.js';
 import { fetchPublic } from '../core/publicurl.js';
 import { groupsOf, loadSource } from '../core/sources.js';
+import { createSubtitles, credentialsFrom, moviehash, shiftVtt } from '../core/subtitles.js';
 import { b64urlDecode, proxyPath } from '../core/util.js';
 import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
@@ -76,6 +77,32 @@ export function createApp(opts = {}) {
         });
   const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
   const gated = isPublic && Boolean(accounts);
+
+  // Subtitles (core/subtitles.js): the key comes from the environment, or on a
+  // local install from `hdtilt subs --key` in the config. Read once, lazily.
+  let subsP = null;
+  const subtitles = () => {
+    if (opts.subtitles !== undefined) return Promise.resolve(opts.subtitles || null);
+    subsP ??= (isPublic ? Promise.resolve({}) : readConfig().catch(() => ({}))).then((cfg) => {
+      const s = createSubtitles(credentialsFrom(process.env, cfg));
+      return s.enabled ? s : null;
+    });
+    return subsP;
+  };
+  // A file's moviehash, once per URL (two range requests to the provider).
+  const hashes = new Map();
+  const hashOf = (url) => {
+    if (!hashes.has(url)) {
+      hashes.set(url, moviehash(url, guardedFetch, 6000));
+      if (hashes.size > 2000) hashes.delete(hashes.keys().next().value);
+    }
+    return hashes.get(url);
+  };
+  // Downloads are the scarce part (a daily allowance for the whole server), so
+  // on hdtilt.com each account may spend a few a day; files already fetched are free.
+  const subsPerDay =
+    opts.subsPerDay ?? (Number(process.env.HDTILT_SUBS_PER_DAY) || (isPublic ? 10 : Number.POSITIVE_INFINITY));
+  const subsSpent = new Map(); // user -> { day, n }
 
   // Sign-in and sign-up are the guessable endpoints: 20 tries a minute per address.
   const authPerMinute = opts.authPerMinute ?? 20;
@@ -203,6 +230,7 @@ export function createApp(opts = {}) {
         accounts: Boolean(accounts),
         hls: Boolean(remux),
         vod: true,
+        subtitles: Boolean(await subtitles()),
       });
 
     if (
@@ -216,7 +244,14 @@ export function createApp(opts = {}) {
     }
 
     // hdtilt.com needs an account before it loads anything; a local install has none.
-    if (gated && (path === '/api/load' || path === '/api/vod' || path === '/api/guide' || path === '/api/nownext')) {
+    if (
+      gated &&
+      (path === '/api/load' ||
+        path === '/api/vod' ||
+        path === '/api/subtitles' ||
+        path === '/api/guide' ||
+        path === '/api/nownext')
+    ) {
       if (!(await accounts.whoFrom(req.headers.authorization)))
         return send(res, 401, { error: 'Sign in first', code: 'signin' });
     }
@@ -236,6 +271,32 @@ export function createApp(opts = {}) {
       // A playlist `hdtilt add` saved on this machine: its login is in the config.
       if (source.type === 'saved' && !isPublic) source = (await readConfig()).playlists[source.name] || source;
       return send(res, 200, await browseVod(source, { kind, category, q, seriesId }, { fetch: guardedFetch }));
+    }
+
+    // Subtitles for a film or an episode: { title, year, tmdbId, season, episode, languages, url }.
+    // With the stream url, a moviehash puts subtitles made for that very file first.
+    if (path === '/api/subtitles' && req.method === 'POST') {
+      const subs = await subtitles();
+      if (!subs) return send(res, 501, { error: 'subtitles are not set up on this server' });
+      const b = await readJson(req);
+      if (!b.title && !b.tmdbId && !b.imdbId) return send(res, 400, { error: 'title or tmdbId required' });
+      let hash = null;
+      if (b.url && /^https?:/i.test(String(b.url))) hash = await hashOf(String(b.url));
+      const ask = {
+        title: b.title,
+        year: Number(b.year) || undefined,
+        tmdbId: b.tmdbId,
+        imdbId: b.imdbId,
+        season: b.season ?? undefined,
+        episode: b.episode ?? undefined,
+        languages: b.languages,
+        moviehash: hash || undefined,
+      };
+      let items = await subs.search(ask);
+      // An id the panel got wrong finds nothing; the title may still.
+      if (!items.length && (b.tmdbId || b.imdbId) && b.title)
+        items = await subs.search({ ...ask, tmdbId: undefined, imdbId: undefined });
+      return send(res, 200, { items: items.slice(0, 60), moviehash: hash });
     }
 
     // Programmes for a set of channels. channels: [{id, name, tvgId}]
@@ -381,6 +442,39 @@ export function createApp(opts = {}) {
     }
   }
 
+  /** /subs/<fileId>.vtt[?shift=-120.5]: one subtitle file as WebVTT, from the disk cache or OpenSubtitles. */
+  async function subFile(req, res, fileId) {
+    const subs = await subtitles();
+    if (!subs) return send(res, 501, 'subtitles are not set up on this server');
+    const who = gated
+      ? accounts.mediaUser(cookieOf(req, 'hdtilt_media')) || (await accounts.whoFrom(req.headers.authorization))?.userId
+      : clientIp(req);
+    const key = String(who || clientIp(req));
+    const day = new Date().toISOString().slice(0, 10);
+    const spent = subsSpent.get(key);
+    const used = spent?.day === day ? spent.n : 0;
+    if (used >= subsPerDay && !(await subs.hasCached(fileId)))
+      return send(
+        res,
+        429,
+        `That's ${subsPerDay} new subtitles today; ones already fetched still work. More tomorrow.`,
+      );
+    try {
+      const { vtt, fresh } = await subs.download(fileId);
+      if (fresh) {
+        subsSpent.set(key, { day, n: used + 1 });
+        if (subsSpent.size > 50_000) subsSpent.clear();
+      }
+      const shift = Number(new URL(req.url, 'http://x').searchParams.get('shift')) || 0;
+      return send(res, 200, shiftVtt(vtt, shift), {
+        'content-type': 'text/vtt; charset=utf-8',
+        'cache-control': shift ? 'private, max-age=3600' : 'private, max-age=86400',
+      });
+    } catch (e) {
+      return send(res, e.status || 502, e.message);
+    }
+  }
+
   /** /hls/<b64>/index.m3u8 starts or joins a conversion; /hls/s/<key>/<segment> serves it. */
   async function hls(req, res, path) {
     if (!remux) return send(res, 501, 'this server cannot convert transport streams (no ffmpeg)');
@@ -437,6 +531,7 @@ export function createApp(opts = {}) {
 
   async function mcp(req, res) {
     if (req.method === 'GET') return send(res, 405, 'POST JSON-RPC here', { allow: 'POST' });
+    ctx.subtitles ??= await subtitles();
     const body = await readJson(req);
     // Tools need an account on hdtilt.com (a session or an `hdtilt login` token);
     // initialize and tools/list stay open so a client can discover them.
@@ -507,8 +602,10 @@ export function createApp(opts = {}) {
       const pm = /^\/p\/([A-Za-z0-9_-]+)(?:\/[^/]*)?$/.exec(path);
       // On hdtilt.com the stream proxy is for signed-in viewers only (the
       // media cookie, or a bearer); ffmpeg's own reads come from inside.
-      if ((pm || path.startsWith('/hls/')) && gated && !isInternal(req) && !(await mediaAllowed(req)))
+      const sm = /^\/subs\/(\d{1,12})\.vtt$/.exec(path);
+      if ((pm || sm || path.startsWith('/hls/')) && gated && !isInternal(req) && !(await mediaAllowed(req)))
         return send(res, 401, 'Sign in to watch');
+      if (sm) return await subFile(req, res, Number(sm[1]));
       if (pm) return await proxy(req, res, pm[1]);
       if (path.startsWith('/hls/')) return await hls(req, res, path);
       if (path === '/mcp') return await mcp(req, res);

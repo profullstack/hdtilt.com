@@ -29,10 +29,14 @@
       <input type="range" id="vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
       <div class="seek" id="seekwrap" hidden><span id="t-cur">0:00</span><input type="range" id="seek" min="0" max="1" step="0.1" value="0" aria-label="Position"><span id="t-dur">0:00</span></div>
       <span class="spacer"></span>
+      <button type="button" data-c="cc" aria-label="Subtitles" hidden></button>
       <button type="button" data-c="pip" aria-label="Picture in picture"></button>
       <button type="button" data-c="fs" aria-label="Full screen"></button>
     </div>
   </section>
+
+  <!-- Subtitles for a film or an episode (web/src/subs.js). -->
+  <section id="subs" class="subs" hidden role="dialog" aria-label="Subtitles"></section>
 
   <!-- Channel list: groups rail + channels. -->
   <section id="list" class="list" hidden>

@@ -13,6 +13,7 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 - **Catch-up:** Xtream timeshift, plus the M3U `catchup` / `catchup-source` / `tvg-rec` forms (`default`, `append`, `shift`, `flussonic`).
 - **Playback** through [`@profullstack/player`](https://github.com/profullstack/player): HLS (hls.js), MPEG-TS (mpegts.js) and MP4. It restarts stalled live streams and explains codec failures.
 - **Movies & Shows:** an Xtream line's films and series in their own tab, a category at a time (a big line has hundreds of thousands of titles, so nothing loads them all at once). Search covers every title; a show opens into seasons and episodes; Continue watching resumes where you stopped, and the next episode follows. Providers serve films as ripped, usually MKV with AC-3 / E-AC-3 / DTS sound that no browser plays, so the server converts them on the fly: the picture is copied, only the sound becomes AAC (cheap), delivered as HLS. Seeking past what is converted restarts the conversion there. ◀ / ▶ jump 10 s / 30 s, `n` is the next episode. A plain M3U's `/movie/` and `/series/` entries show up there too.
+- **Subtitles** from [OpenSubtitles](https://www.opensubtitles.com) on any film or episode: the CC button (or `c`) lists what exists in your language, best match first. Matches use the provider's TMDB id when it has one, else the cleaned-up title and year (an episode by its show, season and episode), and a moviehash of the file itself puts subtitles made for that exact rip on top (marked THIS FILE). −½s / +½s (or ◀ / ▶ in the panel) fix timing; the pick and its timing are remembered per title. Each file is fetched from OpenSubtitles once and kept, so a film someone already watched with subtitles costs nothing.
 - **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/guide` (lists take `?q=` to filter), `/vod/movies/<category>`, `/vod/shows/<category>`, `/vod/show/<id>`, `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
 - **A global nav** with Live TV (with a filter box), Movies & Shows, TV Guide, ★ Favorites, Recent, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
 - **iPhone and iPad Safari:** they have no Media Source Extensions, so they cannot play an MPEG-TS stream directly. hdtilt asks an Xtream line for its HLS version when it offers one, and otherwise the server repackages the stream as HLS (`ffmpeg -c copy`, no transcoding, shared by everyone watching that channel). Self-hosters need `ffmpeg` on the PATH, or `HDTILT_FFMPEG`.
@@ -81,6 +82,8 @@ hdtilt guide <channel> [--hours 12] [--from -6]
 hdtilt url <channel> [--at <iso-time>]      # --at = catch-up
 hdtilt play <channel> [--player mpv|vlc|ffplay]
 hdtilt fav <channel>
+hdtilt subs --key <opensubtitles-api-key> [--user <u> --pass <p>]
+hdtilt subs <title> [--year Y] [--season S --episode E] [--lang en,fr] [--tmdb id] [--get <n> -o file.vtt]
 hdtilt login [--manual] | whoami | sync | logout
 hdtilt tui | serve [--port] [--host] [--public] | mcp
 ```
@@ -95,7 +98,7 @@ Add it to any MCP client:
 { "mcpServers": { "hdtilt": { "command": "npx", "args": ["-y", "hdtilt", "mcp"] } } }
 ```
 
-Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_on`, `channel_guide`, `stream_url` (with catch-up). Over HTTP (`POST /mcp`), a public server keeps no playlists, so every call passes its own `source`.
+Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_on`, `channel_guide`, `stream_url` (with catch-up), `movies_shows`, `find_subtitles`, `fetch_subtitle` (local only). Over HTTP (`POST /mcp`), a public server keeps no playlists, so every call passes its own `source`.
 
 ## API
 
@@ -110,6 +113,8 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 | GET | `/api/me` | the signed-in account (`Authorization: Bearer`, a session or an OAuth token) |
 | GET / PUT | `/api/library` | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first |
 | GET | `/.well-known/oauth-authorization-server` | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli` |
+| POST | `/api/subtitles` | `{ title?, year?, tmdbId?, season?, episode?, languages?, url? }` → `{ items: [{ fileId, language, release, downloads, hashMatch, … }], moviehash }` |
+| GET | `/subs/<fileId>.vtt?shift=<s>` | one subtitle as WebVTT, cues moved by `shift` seconds |
 | GET | `/hls/<base64url>/index.m3u8` | an MPEG-TS stream repackaged as HLS (for browsers without MSE) |
 | GET | `/p/<base64url>/<name.ext>` | stream proxy; HLS playlists are rewritten so segments and keys come back through it |
 | POST | `/mcp` | MCP JSON-RPC |
@@ -130,7 +135,7 @@ bun install && bun run build
 PORT=8930 node bin/hdtilt.js serve --host 0.0.0.0 --public   # --public for a shared server
 ```
 
-Environment: `PORT`, `HOST`, `HDTILT_PUBLIC=1`, `HDTILT_JWT_SECRET` (turns accounts on), `DATABASE_URL` (Postgres for accounts; memory without it), `HDTILT_LIBRARY_KEY`, `RESEND_API_KEY`, `MAIL_FROM`, `SITE_URL`, `HDTILT_ISSUER` (the CLI's account server), `HDTILT_UA` (the user-agent sent to providers), `HDTILT_HOME` / `HDTILT_CACHE`, `HDTILT_PLAYER`.
+Environment: `PORT`, `HOST`, `HDTILT_PUBLIC=1`, `HDTILT_JWT_SECRET` (turns accounts on), `DATABASE_URL` (Postgres for accounts; memory without it), `HDTILT_LIBRARY_KEY`, `RESEND_API_KEY`, `MAIL_FROM`, `SITE_URL`, `HDTILT_ISSUER` (the CLI's account server), `HDTILT_UA` (the user-agent sent to providers), `HDTILT_HOME` / `HDTILT_CACHE`, `HDTILT_PLAYER`, `OPENSUBTITLES_API_KEY` (turns subtitles on; free at [opensubtitles.com/consumers](https://www.opensubtitles.com/consumers)), `OPENSUBTITLES_USERNAME` / `OPENSUBTITLES_PASSWORD` (an account's daily download allowance instead of 5 per IP), `HDTILT_SUBS_PER_DAY` (new downloads per viewer per day on a public server, default 10).
 
 ## Development
 
