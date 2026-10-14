@@ -10,6 +10,7 @@
 // A plain M3U playlist has its films in the channel list already (entries
 // under /movie/ and /series/), so the app browses those itself: `local`.
 
+import { fold, wordsOf } from './match.js';
 import { normaliseSource } from './sources.js';
 import { hash } from './util.js';
 import * as xtream from './xtream.js';
@@ -19,18 +20,11 @@ const MAX_INDEXES = 4;
 const MAX_RESULTS = 300;
 const indexes = new Map(); // key -> { at, p }
 
-/** Lower case, no accents, no punctuation: what a search compares. */
-export const fold = (s) =>
-  String(s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+export { fold };
 
-/** Every word of the query, anywhere in the title, in any order. */
+/** Every word of the query, anywhere in the title, in any order (core/match.js rules). */
 export function matches(foldedName, words) {
-  for (const w of words) if (!foldedName.includes(w)) return false;
+  for (const w of words) if (!foldedName.includes(w) && !foldedName.replace(/ /g, '').includes(w)) return false;
   return true;
 }
 
@@ -122,7 +116,7 @@ function indexKey(login, kind) {
 
 /** Titles whose name has every word of `q`. Starts-with ranks first. */
 export function searchIndex(ix, q, limit = MAX_RESULTS) {
-  const words = fold(q).split(' ').filter(Boolean);
+  const words = wordsOf(q);
   if (!words.length) return { items: [], total: 0 };
   const first = [];
   const rest = [];

@@ -4,6 +4,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { filterByWords } from './match.js';
 import { loadSource } from './sources.js';
 
 export const configDir = () =>
@@ -79,7 +80,7 @@ export async function channelsFor(name, { refresh = false } = {}) {
   return { name: pick, source, ...data };
 }
 
-/** Find channels by number, exact id, or name substring. */
+/** Find channels by number, exact id or name, else every word of the query in any order. */
 export function findChannels(channels, query) {
   const q = String(query || '')
     .trim()
@@ -92,5 +93,5 @@ export function findChannels(channels, query) {
   }
   const exact = channels.filter((c) => c.id.toLowerCase() === q || c.name.toLowerCase() === q);
   if (exact.length) return exact;
-  return channels.filter((c) => c.name.toLowerCase().includes(q));
+  return filterByWords(channels, q);
 }
