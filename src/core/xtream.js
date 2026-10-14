@@ -78,7 +78,7 @@ export function timeshiftUrl(login, streamId, startMs, minutes, timeZone = 'UTC'
   return `${serverOf(login.server)}/timeshift/${path(login)}/${Math.ceil(minutes)}/${at}/${streamId}.ts`;
 }
 
-async function getJson(url, fetchImpl) {
+export async function getJson(url, fetchImpl = fetch) {
   const res = await fetchImpl(url, { headers: { 'user-agent': 'hdtilt' } });
   if (!res.ok) throw new Error(`provider answered ${res.status}`);
   const text = await res.text();
@@ -136,56 +136,133 @@ export async function liveChannels(login, { fetchImpl = fetch, ext } = {}) {
   });
 }
 
-export async function movies(login, fetchImpl = fetch) {
-  const [cats, items] = await Promise.all([
-    getJson(apiUrl(login, 'get_vod_categories'), fetchImpl),
-    getJson(apiUrl(login, 'get_vod_streams'), fetchImpl),
-  ]);
-  const catName = new Map((cats || []).map((c) => [String(c.category_id), c.category_name]));
-  return (items || []).map((m) => ({
+/** Movie or series categories: [{ id, name }]. kind is 'movie' or 'series'. */
+export async function vodCategories(login, kind, fetchImpl = fetch) {
+  const action = kind === 'series' ? 'get_series_categories' : 'get_vod_categories';
+  const cats = await getJson(apiUrl(login, action), fetchImpl);
+  return (Array.isArray(cats) ? cats : []).map((c) => ({
+    id: String(c.category_id),
+    name: String(c.category_name || ''),
+  }));
+}
+
+const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? undefined : Number(v));
+const yearOf = (...vs) => {
+  for (const v of vs) {
+    const y = /\b(19|20)\d{2}\b/.exec(String(v || ''))?.[0];
+    if (y) return Number(y);
+  }
+  return undefined;
+};
+
+/** One movie as get_vod_streams lists it, in the shape the app shows. */
+export function movieOf(login, m, catName = new Map()) {
+  return {
     id: `m${m.stream_id}`,
-    name: m.name,
+    name: String(m.name || '').trim() || `Movie ${m.stream_id}`,
     group: catName.get(String(m.category_id)) || 'Movies',
+    category: String(m.category_id ?? ''),
     logo: m.stream_icon || undefined,
-    rating: m.rating ? Number(m.rating) : undefined,
+    rating: num(m.rating) || undefined,
+    year: yearOf(m.year, m.releasedate, m.name),
+    added: num(m.added),
     url: movieUrl(login, m.stream_id, m.container_extension || 'mp4'),
     kind: 'vod',
-  }));
+  };
 }
 
-export async function series(login, fetchImpl = fetch) {
-  const [cats, items] = await Promise.all([
-    getJson(apiUrl(login, 'get_series_categories'), fetchImpl),
-    getJson(apiUrl(login, 'get_series'), fetchImpl),
-  ]);
-  const catName = new Map((cats || []).map((c) => [String(c.category_id), c.category_name]));
-  return (items || []).map((s) => ({
+/** One show as get_series lists it. */
+export function showOf(s, catName = new Map()) {
+  return {
     id: `s${s.series_id}`,
     seriesId: Number(s.series_id),
-    name: s.name,
+    name: String(s.name || '').trim() || `Series ${s.series_id}`,
     group: catName.get(String(s.category_id)) || 'Series',
+    category: String(s.category_id ?? ''),
     logo: s.cover || undefined,
     plot: s.plot || undefined,
+    rating: num(s.rating) || undefined,
+    year: yearOf(s.releaseDate, s.release_date, s.name),
+    added: num(s.last_modified),
     kind: 'series',
-  }));
+  };
 }
 
-export async function episodes(login, seriesId, fetchImpl = fetch) {
+/** Movies, all of them or one category's. All of them can be 100+ MB of JSON. */
+export async function movies(login, { category, fetchImpl = fetch } = {}) {
+  const [cats, items] = await Promise.all([
+    category ? [] : getJson(apiUrl(login, 'get_vod_categories'), fetchImpl),
+    getJson(apiUrl(login, 'get_vod_streams', category ? { category_id: category } : {}), fetchImpl),
+  ]);
+  const catName = new Map((cats || []).map((c) => [String(c.category_id), c.category_name]));
+  return (Array.isArray(items) ? items : []).map((m) => movieOf(login, m, catName));
+}
+
+/** Shows, all of them or one category's. */
+export async function series(login, { category, fetchImpl = fetch } = {}) {
+  const [cats, items] = await Promise.all([
+    category ? [] : getJson(apiUrl(login, 'get_series_categories'), fetchImpl),
+    getJson(apiUrl(login, 'get_series', category ? { category_id: category } : {}), fetchImpl),
+  ]);
+  const catName = new Map((cats || []).map((c) => [String(c.category_id), c.category_name]));
+  return (Array.isArray(items) ? items : []).map((s) => showOf(s, catName));
+}
+
+/**
+ * "EN - Lost In Space (2018) - S01E01 - Impact" is how panels title an
+ * episode; beside its show and its S01 E01 it is "Impact". A title that is
+ * nothing but the code keeps the whole thing.
+ */
+export function episodeTitle(raw, n) {
+  const t = String(raw || '').trim();
+  const m = /(?:^|[\s\-–|:])S\d{1,3}\s*E\d{1,4}\b\s*(?:[-–|:]\s*)?(.*)$/i.exec(t);
+  const rest = m?.[1]?.trim();
+  return rest || t || `Episode ${n}`;
+}
+
+/**
+ * A show's details and episodes. Panels send `episodes` as an object keyed by
+ * season, or as a list of lists; both come out as one flat list in order.
+ */
+export async function seriesInfo(login, seriesId, fetchImpl = fetch) {
   const data = await getJson(apiUrl(login, 'get_series_info', { series_id: seriesId }), fetchImpl);
-  const out = [];
-  for (const [season, list] of Object.entries(data?.episodes || {})) {
-    for (const e of list) {
-      out.push({
+  if (!data || typeof data !== 'object') throw new Error('the provider has nothing for that show');
+  const raw = data.episodes || {};
+  const groups = Array.isArray(raw) ? raw.map((list, i) => [list?.[0]?.season ?? i + 1, list]) : Object.entries(raw);
+  const episodes = [];
+  for (const [season, list] of groups) {
+    for (const e of Array.isArray(list) ? list : []) {
+      const info = e.info && typeof e.info === 'object' ? e.info : {};
+      episodes.push({
         id: `e${e.id}`,
-        season: Number(season),
-        episode: Number(e.episode_num),
-        name: e.title,
+        season: Number(e.season ?? season) || 0,
+        episode: Number(e.episode_num) || 0,
+        name: episodeTitle(e.title, e.episode_num),
+        plot: info.plot || undefined,
+        duration: num(info.duration_secs),
+        logo: info.movie_image || undefined,
         url: episodeUrl(login, e.id, e.container_extension || 'mp4'),
         kind: 'vod',
       });
     }
   }
-  return out;
+  episodes.sort((a, b) => a.season - b.season || a.episode - b.episode);
+  const i = data.info || {};
+  return {
+    seriesId: Number(seriesId),
+    name: String(i.name || '').trim(),
+    plot: i.plot || undefined,
+    logo: i.cover || undefined,
+    genre: i.genre || undefined,
+    rating: num(i.rating) || undefined,
+    year: yearOf(i.releaseDate, i.release_date),
+    episodes,
+  };
+}
+
+/** Back-compat: a show's episodes only. */
+export async function episodes(login, seriesId, fetchImpl = fetch) {
+  return (await seriesInfo(login, seriesId, fetchImpl)).episodes;
 }
 
 const b64 = (s) => {

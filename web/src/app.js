@@ -4,10 +4,13 @@
 import { attachSource, isTvBrowser } from '@profullstack/player';
 import { indexAt, nowNext, progress } from '../../src/core/epg.js';
 import { catchupUrl, groupsOf } from '../../src/core/sources.js';
-import { proxyPath } from '../../src/core/util.js';
+import { b64urlEncode, proxyPath } from '../../src/core/util.js';
 import * as account from './account.js';
 import * as api from './data.js';
 import * as store from './store.js';
+import * as vod from './vod.js';
+
+const { V } = vod;
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -43,7 +46,7 @@ const S = {
   focus: 0, // index in view
   groupFocus: 0,
   pane: 'channels', // or 'groups'
-  mode: 'tv', // tv | list | guide | sheet
+  mode: 'tv', // tv | list | guide | vod | sheet
   playing: null,
   previous: null,
   query: '',
@@ -51,6 +54,7 @@ const S = {
   epgAsked: new Set(),
   attached: null,
   catchup: null, // { programme } when playing an archive
+  vod: null, // { item, show, offset, remux, duration } when playing a film or an episode
 };
 
 /* ---------------------------------------------------------------- boot */
@@ -126,6 +130,7 @@ async function usePlaylist(pl, { refresh = false, channelId = null, background =
   }
   S.favs = new Set(await store.get(`fav:${pl.id}`, []));
   S.recent = await store.get(`recent:${pl.id}`, []);
+  await vod.loadHistory(pl.id);
   buildGroups();
   if (background) return;
   const last = lastChannel(channelId);
@@ -180,6 +185,9 @@ function setData(data) {
   S.byId = new Map(S.live.map((c) => [c.id, c]));
   S.epg.clear();
   S.epgAsked.clear();
+  // An M3U carries its films in the list; an Xtream line is asked (core/vod.js).
+  vod.setLocal(data.channels.some((c) => c.kind !== 'live') ? data.channels : null);
+  V.plId = null;
 }
 
 function buildGroups() {
@@ -229,7 +237,12 @@ function setView() {
 
 async function play(ch, { viaProxy = false, url = null, programme = null } = {}) {
   if (!ch) return;
-  if (S.playing && S.playing.id !== ch.id) S.previous = S.playing;
+  if (ch.kind && ch.kind !== 'live') return playVod(ch);
+  if (S.vod) {
+    saveVodPos();
+    S.vod = null;
+  }
+  if (S.playing && S.playing.id !== ch.id && S.playing.kind !== 'vod') S.previous = S.playing;
   S.playing = ch;
   S.catchup = programme ? { programme } : null;
   store.prefs.write(`last:${S.pl.id}`, ch.id);
@@ -273,7 +286,10 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
         if (S.current === mine && !failed && video.readyState < 2) onError('no picture yet');
       }, 9000);
     }
-    video.play().catch(() => {
+    video.play().catch((err) => {
+      // A newer channel replacing this one rejects its play() too (AbortError);
+      // only NotAllowedError is the browser refusing sound.
+      if (err?.name !== 'NotAllowedError' || S.current !== mine) return;
       // The browser refuses sound until the viewer has touched the page. Play
       // the picture now and turn the sound on at their first tap or key.
       autoMuted = true;
@@ -286,6 +302,183 @@ async function play(ch, { viaProxy = false, url = null, programme = null } = {})
   }
   if (S.mode === 'list') renderChannels();
 }
+
+/* ---------------------------------------------------------- films, episodes */
+
+// Codecs every browser decodes. Anything else (AC-3, E-AC-3, DTS, MKV at all)
+// goes through the server's ffmpeg, which copies the picture and makes the
+// sound AAC (src/server/remux.js).
+const PLAIN_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
+const PLAIN_VIDEO = new Set(['h264', 'vp9', 'av1', 'vp8']);
+
+/**
+ * Play a film or an episode. `start`: seconds (default: where it was left).
+ * `remuxed`: go through ffmpeg even if the file looks playable as it is.
+ * `show`: the series an episode belongs to (for next-episode and the history).
+ */
+async function playVod(item, { start = null, remuxed = false, show = undefined } = {}) {
+  if (!item) return;
+  if (S.vod && S.vod.item.id !== item.id) saveVodPos();
+  if (S.playing && S.playing.kind === 'live') S.previous = S.playing;
+  show = show === undefined ? (S.vod?.item.id === item.id ? S.vod.show : vodShowFor(item)) : show;
+  S.playing = item;
+  S.catchup = null;
+  const at = Math.max(0, Math.floor(start ?? vod.resumeAt(item.id)));
+  if (S.mode === 'tv' && /^\/(watch\/|$)/.test(location.pathname)) history.replaceState(history.state, '', watchPath());
+  S.attached?.destroy();
+  S.attached = null;
+  const video = $('video');
+  video.removeAttribute('src');
+  const mine = {};
+  S.current = mine;
+  const canConvert = Boolean(api.serverInfo.hls);
+  let remux = canConvert && remuxed;
+  // An .mp4 with ordinary codecs plays as it is, and seeks natively. Ask first.
+  let info = null;
+  if (canConvert && !remux) {
+    const plainFile = /\.(mp4|m4v|webm|mov)(\?|$)/i.test(item.url);
+    if (!plainFile) remux = true;
+    else {
+      stageMsg(`Opening ${esc(item.name)}…`);
+      info = await api.vodInfo(item.url).catch(() => null);
+      if (S.current !== mine) return;
+      if (info && ((info.audio && !PLAIN_AUDIO.has(info.audio)) || (info.video && !PLAIN_VIDEO.has(info.video))))
+        remux = true;
+    }
+  }
+  S.vod = { item, show, offset: remux ? at : 0, remux, duration: info?.duration || item.duration || item.dur || null };
+  showBanner();
+  stageMsg(`Opening ${esc(item.name)}…`);
+  if (remux && !S.vod.duration) {
+    api
+      .vodInfo(item.url)
+      .then((i) => {
+        if (S.current === mine && i?.duration) {
+          S.vod.duration = i.duration;
+          updateControls();
+        }
+      })
+      .catch(() => {});
+  }
+  // An episode opened from Continue watching knows its show by name only;
+  // fetch the episodes so the next one can follow.
+  if (show && !show.episodes && S.pl) {
+    api
+      .vod(S.pl.source, { seriesId: show.seriesId })
+      .then((r) => S.current === mine && r.show && (S.vod.show = r.show))
+      .catch(() => {});
+  }
+  const target = remux
+    ? { src: `/hls/${b64urlEncode(item.url)}/index.m3u8?vod=1&t=${at}`, kind: 'hls', proxied: true }
+    : api.playable(item.url, { kind: 'vod' });
+  let failed = false;
+  const onError = (msg) => {
+    if (S.current !== mine || failed) return;
+    failed = true;
+    if (!remux && canConvert) return playVod(item, { start: Math.floor(video.currentTime || at), remuxed: true, show });
+    if (!remux && !target.proxied) {
+      const via = { src: proxyPath(item.url, 'mp4'), kind: 'mp4' };
+      return attachVod(video, via, mine, at, false, () =>
+        stageMsg(`<strong>Can't play ${esc(item.name)}</strong>${esc(msg)}`),
+      );
+    }
+    stageMsg(`<strong>Can't play ${esc(item.name)}</strong>${esc(msg)}`);
+  };
+  await attachVod(video, target, mine, remux ? 0 : at, true, onError);
+  if (S.mode === 'vod') renderVodItems();
+}
+
+async function attachVod(video, target, mine, seekTo, watchStall, onError) {
+  try {
+    const att = await attachSource(video, {
+      src: target.src,
+      kind: target.kind,
+      live: false,
+      isTv,
+      onError,
+      onNotice: (m) => S.current === mine && m && stageMsg(esc(m)),
+      unplayableAdvice: 'Try it in VLC or mpv: copy the stream URL from Settings.',
+    });
+    if (S.current !== mine) return att.destroy();
+    S.attached = att;
+    if (att.unplayable) return onError(att.unplayable);
+    if (seekTo)
+      video.addEventListener('loadedmetadata', () => S.current === mine && (video.currentTime = seekTo), {
+        once: true,
+      });
+    // A file the browser cannot decode often just sits there instead of failing.
+    if (watchStall) setTimeout(() => S.current === mine && video.readyState < 2 && onError('no picture yet'), 25_000);
+    video.play().catch((err) => {
+      // Seeking replaces the source, which rejects this play() (AbortError): not a refusal.
+      if (err?.name !== 'NotAllowedError' || S.current !== mine) return;
+      autoMuted = true;
+      video.muted = true;
+      video.play().catch(() => {});
+      stageMsg('Tap anywhere or press a key for sound');
+    });
+  } catch (e) {
+    onError(e.message || String(e));
+  }
+}
+
+/** The show an episode belongs to, when the screen behind it has it open. */
+function vodShowFor(item) {
+  if (V.show?.episodes?.some((e) => e.id === item.id)) return V.show;
+  return item.show || null;
+}
+
+/** Where the film is, in its own time (an ffmpeg session starts at `offset`). */
+function vodTime() {
+  const v = $('video');
+  return (S.vod?.offset || 0) + (v.currentTime || 0);
+}
+function vodDuration() {
+  const v = $('video');
+  if (S.vod?.duration) return S.vod.duration;
+  return Number.isFinite(v.duration) && v.duration > 0 ? (S.vod?.offset || 0) + v.duration : null;
+}
+
+let lastSaved = 0;
+function saveVodPos() {
+  if (!S.vod || !S.pl) return;
+  const t = vodTime();
+  if (!t) return;
+  lastSaved = Date.now();
+  vod.remember(S.pl.id, S.vod.item, t, vodDuration(), S.vod.show);
+}
+
+/** Jump to `t` seconds. Inside what ffmpeg has made: a seek; past it: a new start. */
+function vodSeek(t) {
+  if (!S.vod) return;
+  const v = $('video');
+  const dur = vodDuration();
+  t = Math.max(0, dur ? Math.min(t, dur - 1) : t);
+  if (!S.vod.remux) {
+    v.currentTime = t;
+    return;
+  }
+  const rel = t - S.vod.offset;
+  const end = v.seekable.length ? v.seekable.end(v.seekable.length - 1) : 0;
+  if (rel >= 0 && rel <= end) v.currentTime = rel;
+  else playVod(S.vod.item, { start: Math.floor(t), remuxed: true, show: S.vod.show });
+}
+
+$('video').addEventListener('timeupdate', () => {
+  if (S.vod && Date.now() - lastSaved > 10_000) saveVodPos();
+});
+$('video').addEventListener('pause', () => S.vod && saveVodPos());
+addEventListener('pagehide', () => S.vod && saveVodPos());
+$('video').addEventListener('ended', () => {
+  if (!S.vod) return;
+  const dur = vodDuration();
+  if (dur && vodTime() < dur - 30) return; // an ffmpeg session ending early is not the end
+  vod.remember(S.pl.id, S.vod.item, dur || vodTime(), dur, S.vod.show);
+  const next = vod.nextEpisode(S.vod.show, S.vod.item);
+  if (next) {
+    toast(`Next: ${vod.epLabel(next)} ${next.name}`);
+    playVod(next, { start: 0, show: S.vod.show });
+  } else stageMsg(`<strong>${esc(S.vod.item.name)}</strong>The end.`);
+});
 
 /**
  * An Xtream line that also serves HLS gives Safari on iPhone the .m3u8 of the
@@ -347,6 +540,7 @@ let autoMuted = false; // muted by the browser's autoplay rule, not by the viewe
 function showBanner(autohide = true) {
   const ch = S.playing;
   if (!ch) return;
+  if (S.vod) return showVodBanner(autohide);
   ensureEpg([ch]);
   const b = $('banner');
   const { now, next } = S.catchup ? { now: S.catchup.programme, next: null } : nn(ch);
@@ -366,7 +560,33 @@ function showBanner(autohide = true) {
   if (autohide) bannerTimer = setTimeout(hideChrome, 5000);
 }
 
+/** A film's or an episode's banner: what it is, and the seek bar below. */
+function showVodBanner(autohide) {
+  const { item, show } = S.vod;
+  const ep = item.season != null;
+  const title = ep && show?.name ? show.name : item.name;
+  const sub = ep ? `${vod.epLabel(item)} · ${item.name}` : [item.year, item.group].filter(Boolean).join(' · ');
+  const next = vod.nextEpisode(S.vod.show, item);
+  $('banner-info').innerHTML = `
+    ${logo({ name: title, logo: item.logo || show?.logo }, 'logo poster')}
+    <div>
+      <div><span class="name">${esc(title)}</span></div>
+      <div class="now">${esc(sub)}</div>
+      ${next ? `<div class="next">Next: ${vod.epLabel(next)} ${esc(next.name)}</div>` : ''}
+    </div>
+    <div class="tags"><span class="tag">${ep ? 'EPISODE' : 'MOVIE'}</span>${next ? '<button type="button" class="fav-btn banner-fav vod-next">Next episode ▸</button>' : ''}</div>`;
+  $('banner').hidden = false;
+  updateControls();
+  document.body.classList.add('chrome-on');
+  clearTimeout(bannerTimer);
+  if (autohide) bannerTimer = setTimeout(hideChrome, 5000);
+}
+
 $('banner').addEventListener('click', (e) => {
+  if (e.target.closest('.vod-next') && S.vod) {
+    e.stopPropagation();
+    return playVod(vod.nextEpisode(S.vod.show, S.vod.item), { start: 0, show: S.vod.show });
+  }
   if (!e.target.closest('.fav-btn')) return;
   e.stopPropagation();
   toggleFav(S.playing);
@@ -407,6 +627,18 @@ function updateControls() {
   ctl('pip').hidden = !document.pictureInPictureEnabled;
   ctl('fs').innerHTML = document.fullscreenElement ? ICON.unfs : ICON.fs;
   ctl('fs').hidden = !document.fullscreenEnabled;
+  // A film has its own clock: an ffmpeg session starts where it was asked to.
+  if (S.vod) {
+    const dur = vodDuration();
+    $('seekwrap').hidden = !dur;
+    if (dur && !seeking) {
+      $('seek').max = String(dur);
+      $('seek').value = String(vodTime());
+      $('t-cur').textContent = clock(vodTime());
+      $('t-dur').textContent = clock(dur);
+    }
+    return;
+  }
   // A catch-up programme has an end, so it can be scrubbed; live TV cannot.
   const seekable = Boolean(S.catchup) && Number.isFinite(v.duration) && v.duration > 0;
   $('seekwrap').hidden = !seekable;
@@ -468,7 +700,8 @@ $('seek').addEventListener('input', (e) => {
   $('t-cur').textContent = clock(Number(e.target.value));
 });
 $('seek').addEventListener('change', (e) => {
-  $('video').currentTime = Number(e.target.value);
+  if (S.vod) vodSeek(Number(e.target.value));
+  else $('video').currentTime = Number(e.target.value);
   seeking = false;
 });
 for (const ev of ['play', 'pause', 'volumechange', 'durationchange', 'timeupdate'])
@@ -713,6 +946,306 @@ async function toggleFav(ch) {
     }
     syncGuideFav();
   } else showBanner();
+}
+
+/* ---------------------------------------------------------- Movies & Shows */
+
+const vodAsk = (ask) => api.vod(S.pl.source, ask);
+const vodKindSeg = () => (V.kind === 'series' ? 'shows' : 'movies');
+/** The category list of the open kind (never a show). */
+const vodListPath = () =>
+  `/vod/${vodKindSeg()}/${encodeURIComponent(V.cat)}${V.q ? `?q=${encodeURIComponent(V.q)}` : ''}`;
+/** The rail, remote-order: the two kinds, then the categories. */
+const vodRailEntries = () => [{ kind: 'movie' }, { kind: 'series' }, ...vod.railOf()];
+
+/**
+ * /vod/movies[/<cat>][?q=]  /vod/shows[/<cat>]  /vod/show/<seriesId>
+ * Categories are asked for once per kind, a category once until another opens.
+ */
+async function openVod({ seg, arg, q = '' } = {}) {
+  closeAll();
+  hideChrome();
+  S.mode = 'vod';
+  syncNav();
+  $('vod').hidden = false;
+  const seq = ++V.seq;
+  if (V.plId !== S.pl.id) {
+    Object.assign(V, { plId: S.pl.id, catsKind: null, cats: [], items: [], show: null, cat: null, itemsKey: '' });
+  }
+  const seriesId = seg === 'show' ? Number(arg) : null;
+  V.kind = seriesId || seg === 'shows' ? 'series' : 'movie';
+  V.q = q;
+  V.error = '';
+  if (!seriesId) V.show = null;
+  const stale = () => seq !== V.seq || S.mode !== 'vod';
+  try {
+    if (V.catsKind !== V.kind) {
+      V.loading = 'Loading categories…';
+      renderVod();
+      await vod.loadCategories(vodAsk);
+      if (stale()) return;
+      V.catsKind = V.kind;
+    }
+    if (seriesId) {
+      if (V.show?.seriesId !== seriesId) {
+        V.loading = 'Loading episodes…';
+        renderVod();
+        await vod.loadShow(vodAsk, seriesId);
+        if (stale()) return;
+        V.focus = 0;
+      }
+    } else {
+      // Nothing named: Continue watching if there is any, else the first category.
+      const started = vod.continueList().some((x) => (V.kind === 'series' ? x.show : !x.show));
+      const cat = arg || (started ? vod.CONTINUE : V.cats[0]?.id || vod.SEARCH);
+      const key = `${V.kind}|${cat}|${cat === vod.SEARCH ? V.q : ''}`;
+      if (V.itemsKey !== key || cat === vod.CONTINUE) {
+        V.cat = cat;
+        V.loading = cat === vod.SEARCH && V.q ? 'Searching…' : 'Loading…';
+        renderVod();
+        await vod.loadCategory(vodAsk);
+        if (stale()) return;
+        V.itemsKey = key;
+        V.focus = V.backFocus?.[key] ?? 0;
+      }
+      history.replaceState(history.state, '', vodListPath());
+    }
+  } catch (e) {
+    if (stale()) return;
+    if (e.status === 401) return go(signInPath(), { replace: true });
+    V.error = e.message || String(e);
+  }
+  V.loading = '';
+  V.railFocus = Math.max(
+    0,
+    vodRailEntries().findIndex((r) => r.id === V.cat),
+  );
+  vod.setItemsView();
+  renderVod({ scroll: true });
+  if (V.cat === vod.SEARCH && !V.show && !V.q) $('vq')?.focus();
+}
+
+function renderVod({ scroll = false } = {}) {
+  $('vod').classList.toggle('groups-open', V.pane === 'rail');
+  renderVodRail();
+  renderVodHead();
+  renderVodItems(scroll);
+}
+
+function renderVodRail() {
+  const rail = $('vod-rail');
+  const entries = vodRailEntries();
+  rail.innerHTML = '';
+  const kinds = el('div', 'vod-kinds');
+  entries.forEach((r, i) => {
+    const focus = V.pane === 'rail' && i === V.railFocus ? ' focus' : '';
+    if (r.kind) {
+      const b = el('button', `chip${r.kind === V.kind ? ' cur' : ''}${focus}`, vod.kindName(r.kind));
+      b.setAttribute('aria-pressed', String(r.kind === V.kind));
+      b.onclick = () => pickVodRail(i);
+      kinds.append(b);
+      if (i === 1) rail.append(kinds);
+      return;
+    }
+    const b = el('button', `${r.id === V.cat && !V.show ? 'cur' : ''}${focus}`, `<span>${esc(r.name)}</span>`);
+    b.onclick = () => pickVodRail(i);
+    rail.append(b);
+  });
+  rail.querySelector('.focus')?.scrollIntoView({ block: 'nearest' });
+}
+
+function pickVodRail(i) {
+  const r = vodRailEntries()[i];
+  V.pane = 'items';
+  V.focus = 0;
+  if (r.kind) return go(`/vod/${r.kind === 'series' ? 'shows' : 'movies'}`, { replace: true });
+  V.q = '';
+  go(`/vod/${vodKindSeg()}/${encodeURIComponent(r.id)}`, { replace: true });
+}
+
+function vodTitle() {
+  if (V.show) return V.show.name;
+  if (V.cat === vod.CONTINUE) return 'Continue watching';
+  if (V.cat === vod.SEARCH) return `Search ${vod.kindName(V.kind).toLowerCase()}`;
+  return V.cats.find((c) => c.id === V.cat)?.name || vod.kindName(V.kind);
+}
+
+function renderVodHead() {
+  const h = $('vod-head');
+  const searching = V.cat === vod.SEARCH && !V.show;
+  const seasons = V.show ? vod.seasonsOf(V.show) : [];
+  h.innerHTML = `<button type="button" class="close-btn" id="vod-close" aria-label="Close, back to the picture">✕</button>
+    ${V.show ? '<button type="button" class="close-btn" id="vod-back" aria-label="Back to the shows">‹</button>' : '<button type="button" class="close-btn vod-cats" id="vod-cats" aria-label="Categories">☰</button>'}
+    <h2>${esc(vodTitle())}</h2>
+    <input id="vq" class="filter" type="search" placeholder="${searching ? `Search all ${vod.kindName(V.kind).toLowerCase()}…` : 'Filter…'}" value="${esc(V.q)}" autocomplete="off" spellcheck="false" aria-label="${searching ? 'Search' : 'Filter'}">
+    ${V.show?.plot ? `<p class="vod-plot">${esc([V.show.year, V.show.genre].filter(Boolean).join(' · '))}${V.show.year || V.show.genre ? ' — ' : ''}${esc(V.show.plot)}</p>` : ''}
+    ${seasons.length > 1 ? `<div class="vod-seasons">${seasons.map((s) => `<button type="button" class="chip${s === V.season ? ' cur' : ''}" data-season="${s}">Season ${s}</button>`).join('')}</div>` : ''}
+    <span class="hint" id="vod-count"></span>`;
+  updateVodCount();
+  $('vod-close').onclick = () => closeToPicture();
+  if ($('vod-back')) $('vod-back').onclick = () => goBack();
+  if ($('vod-cats'))
+    $('vod-cats').onclick = () => {
+      V.pane = V.pane === 'rail' ? 'items' : 'rail';
+      renderVod();
+    };
+  h.querySelector('.vod-seasons')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-season]');
+    if (!b) return;
+    V.season = Number(b.dataset.season);
+    V.focus = 0;
+    vod.setItemsView();
+    renderVodHead();
+    renderVodItems(true);
+  });
+  const q = $('vq');
+  let timer = 0;
+  q.oninput = () => {
+    V.q = q.value.trim();
+    if (searching) {
+      // The whole catalogue is on the server: ask once typing pauses.
+      clearTimeout(timer);
+      timer = setTimeout(searchVod, 450);
+      return;
+    }
+    if (!V.show) history.replaceState(history.state, '', vodListPath());
+    V.focus = 0;
+    vod.setItemsView();
+    updateVodCount();
+    renderVodItems(true);
+  };
+  if (searching && document.activeElement?.id !== 'vq' && !V.q) setTimeout(() => $('vq')?.focus(), 0);
+}
+
+/** Search the whole catalogue for V.q; only the results re-render, so typing carries on. */
+async function searchVod() {
+  const seq = ++V.seq;
+  history.replaceState(history.state, '', vodListPath());
+  V.error = '';
+  V.loading = V.q.length >= 2 ? 'Searching… (the first search on a big line takes a few seconds)' : '';
+  updateVodCount();
+  renderVodItems();
+  try {
+    await vod.loadCategory(vodAsk);
+    if (seq !== V.seq) return;
+    V.itemsKey = `${V.kind}|${vod.SEARCH}|${V.q}`;
+  } catch (e) {
+    if (seq !== V.seq) return;
+    V.error = e.message || String(e);
+  }
+  V.loading = '';
+  V.focus = 0;
+  vod.setItemsView();
+  updateVodCount();
+  renderVodItems(true);
+}
+
+function updateVodCount() {
+  const c = $('vod-count');
+  if (!c) return;
+  const n = V.view.length;
+  const more = V.cat === vod.SEARCH && V.total > n ? ` of ${V.total.toLocaleString()} — add a word to narrow it` : '';
+  c.textContent = V.loading ? '' : `${n.toLocaleString()}${more} · ◀ categories`;
+}
+
+function vodRowHtml(x, i) {
+  const cls = `row vrow${i === V.focus && V.pane === 'items' ? ' focus' : ''}${x.id === S.playing?.id ? ' playing' : ''}`;
+  const p = x.resume && x.dur ? x.resume / x.dur : vod.progressOf(x.id);
+  const bar = p > 0.01 ? `<div class="bar"><i style="width:${(p * 100).toFixed(1)}%"></i></div>` : '';
+  if (x.season != null && !x.show) {
+    // An episode in its show.
+    const meta = [vod.runtime(x.duration), x.plot].filter(Boolean).join(' · ');
+    return `<div class="${cls} ep" data-i="${i}" role="option">
+      <span class="no">${vod.epLabel(x)}</span>
+      <span class="meta"><div class="nm">${esc(x.name)}</div><div class="pg">${esc(meta) || '&nbsp;'}</div>${bar}</span></div>`;
+  }
+  const name = x.show ? `${x.show.name} — ${vod.epLabel(x)}` : x.name;
+  const bits = x.resume
+    ? [`Resume at ${clock(x.resume)}${x.dur ? ` of ${clock(x.dur)}` : ''}`]
+    : [x.year, x.rating ? `★ ${x.rating}` : '', V.cat === vod.SEARCH || V.cat === vod.CONTINUE ? x.group : ''].filter(
+        Boolean,
+      );
+  return `<div class="${cls}" data-i="${i}" role="option">
+    ${logo({ name, logo: x.logo || x.show?.logo }, 'logo poster')}
+    <span class="meta"><div class="nm">${esc(name)}</div><div class="pg">${esc(bits.join(' · ')) || '&nbsp;'}</div>${bar}</span>
+    <span class="go">${x.kind === 'series' ? '›' : '▶'}</span></div>`;
+}
+
+function renderVodItems(scrollToFocus = false) {
+  const box = $('vod-items');
+  const rp = rowPx();
+  if (V.loading || V.error || !V.view.length) {
+    let msg;
+    if (V.loading) msg = `<span class="spin" aria-hidden="true"></span>${esc(V.loading)}`;
+    else if (V.error)
+      msg = `<strong>That did not load.</strong> ${esc(V.error)} <button type="button" class="btn" id="vod-retry">Try again</button>`;
+    else if (V.cat === vod.CONTINUE && !V.show)
+      msg = `Nothing started yet. Pick a ${V.kind === 'series' ? 'show' : 'movie'} from a category on the left, and it waits here until you finish it.`;
+    else if (V.cat === vod.SEARCH && !V.show)
+      msg = V.q.length < 2 ? 'Type a title (two letters or more).' : `Nothing matches "${esc(V.q)}".`;
+    else if (V.local && !V.local[V.kind].length) msg = `This playlist has no ${vod.kindName(V.kind).toLowerCase()}.`;
+    else msg = V.q ? `Nothing here matches "${esc(V.q)}".` : 'Nothing here.';
+    box.innerHTML = `<div class="empty">${msg}</div>`;
+    const r = $('vod-retry');
+    if (r) r.onclick = () => ((V.itemsKey = ''), (V.catsKind = null), render(location.pathname + location.search));
+    return;
+  }
+  let spacer = box.querySelector('.spacer');
+  if (!spacer) {
+    box.innerHTML = '';
+    spacer = el('div', 'spacer');
+    box.append(spacer);
+  }
+  spacer.style.height = `${V.view.length * rp + 8}px`;
+  if (scrollToFocus) {
+    const top = V.focus * rp;
+    if (top < box.scrollTop || top + rp > box.scrollTop + box.clientHeight)
+      box.scrollTop = top - box.clientHeight / 2 + rp / 2;
+  }
+  const first = Math.max(0, Math.floor(box.scrollTop / rp) - 4);
+  const last = Math.min(V.view.length, Math.ceil((box.scrollTop + box.clientHeight) / rp) + 4);
+  const rows = [];
+  for (let i = first; i < last; i++)
+    rows.push(vodRowHtml(V.view[i], i).replace('role="option"', `role="option" style="top:${i * rp + 4}px"`));
+  for (const r of box.querySelectorAll('.row')) r.remove();
+  spacer.insertAdjacentHTML('afterend', rows.join(''));
+}
+
+$('vod-items').addEventListener('scroll', () => S.mode === 'vod' && renderVodItems());
+$('vod-items').addEventListener('click', (e) => {
+  const r = e.target.closest('.row');
+  if (!r) return;
+  V.focus = Number(r.dataset.i);
+  V.pane = 'items';
+  openVodItem(V.view[V.focus], { close: true });
+});
+
+/** A show opens; a film or an episode plays (and, from a click, the screen closes). */
+function openVodItem(x, { close = false } = {}) {
+  if (!x) return;
+  if (x.kind === 'series' && x.seriesId != null) {
+    V.backFocus = { ...(V.backFocus || {}), [V.itemsKey]: V.focus };
+    V.q = '';
+    return go(`/vod/show/${x.seriesId}`);
+  }
+  const show = V.show && x.season != null ? V.show : x.show || null;
+  if (x.id !== S.playing?.id) playVod(x, { show });
+  else if (S.vod && $('video').paused)
+    $('video')
+      .play()
+      .catch(() => {});
+  if (close) closeToPicture();
+  else renderVodItems();
+}
+
+function vodMove(step) {
+  if (V.pane === 'rail') {
+    V.railFocus = Math.min(vodRailEntries().length - 1, Math.max(0, V.railFocus + step));
+    return renderVodRail();
+  }
+  if (!V.view.length) return;
+  V.focus = Math.min(V.view.length - 1, Math.max(0, V.focus + step));
+  renderVodItems(true);
 }
 
 /* ---------------------------------------------------------------- TV guide */
@@ -1148,6 +1681,7 @@ function openHome() {
       ${HOME.error ? '<button class="btn primary" data-home="retry">Try again</button>' : `<button class="btn primary" data-home="watch"${last ? '' : ' disabled'}>▶ ${last ? `Watch ${esc(last.name)}` : 'Watch'}</button>`}
       <button class="btn" data-home="favs"${off}>★ Favorites</button>
       <button class="btn" data-home="live"${off}>Live TV</button>
+      <button class="btn" data-home="vod"${off}>Movies &amp; Shows</button>
       <button class="btn" data-home="guide"${off}>TV guide</button>
       <button class="btn" data-home="settings">Playlists</button>
     </div>`,
@@ -1161,7 +1695,7 @@ function openHome() {
     // The picture starts behind whatever opens, the way it always does.
     if (!S.playing) play(lastChannel());
     if (act === 'watch') return go(watchPath(), { replace: true });
-    go({ favs: '/favorites', live: '/channels', guide: '/guide' }[act]);
+    go({ favs: '/favorites', live: '/channels', guide: '/guide', vod: '/vod' }[act]);
   };
   // Keep the remote where it was, except that the moment the channels arrive it goes to Watch.
   const enabled = [...sh.querySelectorAll('.home-tiles button:not([disabled])')];
@@ -1556,7 +2090,9 @@ function render(full) {
   const u = new URL(full, location.origin);
   const [view, arg] = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
   if (signInFirst() && view !== 'account') return go(signInPath(), { replace: true });
-  const needsPlaylist = ['watch', 'channels', 'favorites', 'recent', 'search', 'guide', undefined].includes(view);
+  const needsPlaylist = ['watch', 'channels', 'favorites', 'recent', 'search', 'guide', 'vod', undefined].includes(
+    view,
+  );
   // Channels still on their way: the home screen says so, a list would look empty.
   if (needsPlaylist && HOME.loading) return go('/home', { replace: true });
   if (needsPlaylist && !S.pl) return go('/settings/add', { replace: true });
@@ -1586,6 +2122,13 @@ function render(full) {
     }
     case 'home':
       return openHome();
+    case 'movies':
+    case 'shows':
+      return go(`/vod/${view}`, { replace: true });
+    case 'vod': {
+      const third = u.pathname.split('/').filter(Boolean).map(decodeURIComponent)[2];
+      return openVod({ seg: arg, arg: third, q: u.searchParams.get('q') || '' });
+    }
     case 'guide':
       G.q = u.searchParams.get('q') || '';
       // ?only=favorites, else what was chosen last time, else what the list was showing.
@@ -1609,6 +2152,7 @@ function render(full) {
 function closeAll() {
   if (S.mode === 'guide') document.getElementById('app').prepend($('video'));
   $('list').hidden = true;
+  $('vod').hidden = true;
   $('guide').hidden = true;
   $('guide-info').innerHTML = '';
   $('sheet').hidden = true;
@@ -1626,6 +2170,7 @@ const navButtons = () => [...$('nav').querySelectorAll('.nav-items button:not([h
 /** Which nav entry the screen in front of you is. */
 function navCurrent() {
   if (S.mode === 'guide') return 'guide';
+  if (S.mode === 'vod') return 'vod';
   if (S.mode === 'sheet') return $('sheet').dataset.screen || '';
   if (S.mode === 'list') return S.group === FAV ? 'favs' : S.group === RECENT ? 'recent' : 'live';
   return 'live';
@@ -1665,6 +2210,8 @@ function navAct(act) {
   const to = {
     // Live TV is always every channel; the groups are one press away inside it.
     live: S.mode === 'list' && S.group === ALL && !S.query ? null : '/channels',
+    // Back to the category it was on, out of a show if one is open.
+    vod: S.mode === 'vod' && !V.show ? null : V.cat && V.plId === S.pl?.id ? vodListPath() : '/vod',
     guide: '/guide',
     favs: '/favorites',
     recent: '/recent',
@@ -1823,6 +2370,27 @@ addEventListener('keydown', (e) => {
     }
     return;
   }
+  if (typing && e.target.id === 'vq') {
+    if (k === 'ArrowDown' || k === 'Enter') {
+      e.target.blur();
+      V.pane = 'items';
+      renderVodItems(true);
+      e.preventDefault();
+    } else if (k === 'ArrowUp') {
+      e.target.blur();
+      focusNav();
+      e.preventDefault();
+    } else if (back) {
+      // Esc clears the box; a second Esc leaves the screen.
+      e.target.blur();
+      if (V.q) {
+        e.target.value = '';
+        e.target.dispatchEvent(new Event('input'));
+      }
+      e.preventDefault();
+    }
+    return;
+  }
   if (typing) {
     if (k === 'ArrowDown' || k === 'Enter') {
       e.target.blur();
@@ -1846,6 +2414,27 @@ addEventListener('keydown', (e) => {
       }
     }
     return;
+  }
+
+  // A film over the picture: no channels to zap, so the arrows seek
+  // (TiviMate's ◀ 10s / ▶ 30s) and OK goes back to where it was picked.
+  if (S.mode === 'tv' && S.vod) {
+    let handled = true;
+    if (k === 'ArrowLeft' || k === 'MediaRewind') vodSeek(vodTime() - 10);
+    else if (k === 'ArrowRight' || k === 'MediaFastForward') vodSeek(vodTime() + 30);
+    else if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'i' || k === 'Info') showBanner();
+    else if (k === 'Enter' || k === '/')
+      go(V.show && V.plId === S.pl?.id ? vod.vodPath() : V.cat ? vodListPath() : '/vod');
+    else if (k === 'n' || k === 'MediaTrackNext') {
+      const next = vod.nextEpisode(S.vod.show, S.vod.item);
+      if (next) playVod(next, { start: 0, show: S.vod.show });
+    } else if (k === 'f' || k === 'ColorF1Green' || /^\d$/.test(k)) handled = true;
+    else handled = false;
+    if (handled) {
+      if (k.startsWith('Arrow') || k.startsWith('Media')) showBanner();
+      e.preventDefault();
+      return;
+    }
   }
 
   if (S.mode === 'tv') {
@@ -1931,6 +2520,35 @@ addEventListener('keydown', (e) => {
     return;
   }
 
+  if (S.mode === 'vod') {
+    const rail = V.pane === 'rail';
+    const atTop = rail ? V.railFocus === 0 : V.focus === 0 || !V.view.length;
+    // Above the first title is the filter (a remote has no / key), above that the nav.
+    if (k === 'ArrowUp' && atTop && !rail) $('vq')?.focus();
+    else if (k === 'ArrowUp' && atTop) focusNav();
+    else if (k === 'ArrowUp') vodMove(-1);
+    else if (k === 'ArrowDown') vodMove(1);
+    else if (k === 'PageUp' || k === 'ChannelUp') vodMove(-8);
+    else if (k === 'PageDown' || k === 'ChannelDown') vodMove(8);
+    else if (k === 'ArrowLeft' && !rail) {
+      if (V.show) goBack();
+      else {
+        V.pane = 'rail';
+        renderVod();
+      }
+    } else if ((k === 'ArrowRight' || k === 'Enter' || k === ' ') && rail) pickVodRail(V.railFocus);
+    else if (k === 'Enter' || k === ' ') openVodItem(V.view[V.focus]);
+    else if (k === '/') $('vq')?.focus();
+    else if (back) {
+      if (rail) {
+        V.pane = 'items';
+        renderVod();
+      } else goBack();
+    } else return;
+    e.preventDefault();
+    return;
+  }
+
   if (S.mode === 'guide') {
     if (k === 'ArrowUp' && G.row === 0) $('gfav').focus();
     else if (k === 'ArrowUp') guideMove(-1, 0);
@@ -1950,9 +2568,11 @@ addEventListener('keydown', (e) => {
 
 addEventListener('resize', () => {
   if (S.mode === 'list') renderChannels();
+  if (S.mode === 'vod') renderVodItems();
   if (S.mode === 'guide') renderGuide();
 });
 
 // For tests and the curious: the whole app state, read-only by convention.
 globalThis.hdtilt = S;
+globalThis.hdtiltVod = V;
 boot();

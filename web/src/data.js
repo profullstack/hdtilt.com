@@ -48,6 +48,16 @@ export async function savedPlaylists() {
   }
 }
 
+/** Movies & Shows for a source: categories, a category, a search, or a show (see core/vod.js). */
+export function vod(source, ask) {
+  return json('/api/vod', { source, ...ask });
+}
+
+/** A film's length and codecs, read by the server's ffprobe. */
+export function vodInfo(url) {
+  return json(`/hls/${b64urlEncode(url)}/info.json`);
+}
+
 export function guide(url, channels, from, to) {
   const slim = channels.map((c) => ({ id: c.id, name: c.name, tvgId: c.tvgId }));
   return json('/api/guide', { url, channels: slim, from, to }).then((r) => r.programmes);

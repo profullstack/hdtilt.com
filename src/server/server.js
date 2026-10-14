@@ -15,6 +15,7 @@ import { isPlaylist, rewritePlaylist } from '../core/hls.js';
 import { fetchPublic } from '../core/publicurl.js';
 import { groupsOf, loadSource } from '../core/sources.js';
 import { b64urlDecode, proxyPath } from '../core/util.js';
+import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
 import { createAccounts } from './accounts.js';
 import { withFooter } from './footer.js';
@@ -201,6 +202,7 @@ export function createApp(opts = {}) {
         public: isPublic,
         accounts: Boolean(accounts),
         hls: Boolean(remux),
+        vod: true,
       });
 
     if (
@@ -214,7 +216,7 @@ export function createApp(opts = {}) {
     }
 
     // hdtilt.com needs an account before it loads anything; a local install has none.
-    if (gated && (path === '/api/load' || path === '/api/guide' || path === '/api/nownext')) {
+    if (gated && (path === '/api/load' || path === '/api/vod' || path === '/api/guide' || path === '/api/nownext')) {
       if (!(await accounts.whoFrom(req.headers.authorization)))
         return send(res, 401, { error: 'Sign in first', code: 'signin' });
     }
@@ -225,6 +227,15 @@ export function createApp(opts = {}) {
       if (!source?.type) return send(res, 400, { error: 'source required' });
       const data = await loadSource(source, { fetch: guardedFetch });
       return send(res, 200, { ...data, groups: groupsOf(data.channels) });
+    }
+
+    // Movies & Shows, a category or a show at a time (see core/vod.js). Stateless too.
+    if (path === '/api/vod' && req.method === 'POST') {
+      let { source, kind, category, q, seriesId } = await readJson(req);
+      if (!source?.type) return send(res, 400, { error: 'source required' });
+      // A playlist `hdtilt add` saved on this machine: its login is in the config.
+      if (source.type === 'saved' && !isPublic) source = (await readConfig()).playlists[source.name] || source;
+      return send(res, 200, await browseVod(source, { kind, category, q, seriesId }, { fetch: guardedFetch }));
     }
 
     // Programmes for a set of channels. channels: [{id, name, tvgId}]
@@ -373,18 +384,18 @@ export function createApp(opts = {}) {
   /** /hls/<b64>/index.m3u8 starts or joins a conversion; /hls/s/<key>/<segment> serves it. */
   async function hls(req, res, path) {
     if (!remux) return send(res, 501, 'this server cannot convert transport streams (no ffmpeg)');
-    const seg = /^\/hls\/s\/([a-f0-9]{24})\/(seg\d+\.ts)$/.exec(path);
+    const seg = /^\/hls\/s\/([a-f0-9]{24})\/(seg\d+\.(?:ts|m4s)|init\.mp4)$/.exec(path);
     if (seg) {
       const file = await remux.segment(seg[1], seg[2]);
       if (!file) return send(res, 404, 'gone');
       res.writeHead(200, {
-        'content-type': 'video/mp2t',
+        'content-type': seg[2].endsWith('.ts') ? 'video/mp2t' : 'video/mp4',
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
       });
       return createReadStream(file).pipe(res);
     }
-    const m = /^\/hls\/([A-Za-z0-9_-]+)\/index\.m3u8$/.exec(path);
+    const m = /^\/hls\/([A-Za-z0-9_-]+)\/(index\.m3u8|info\.json)$/.exec(path);
     if (!m) return send(res, 404, 'not found');
     let url;
     try {
@@ -394,16 +405,30 @@ export function createApp(opts = {}) {
       return send(res, 400, 'bad stream address');
     }
     try {
+      // A film or episode: its length and codecs, for the seek bar.
+      if (m[2] === 'info.json') return send(res, 200, await remux.probe(url));
+      const q = new URL(req.url, 'http://x').searchParams;
+      const opts = q.get('vod') === '1' ? { vod: true, at: Number(q.get('t')) || 0 } : {};
       // A viewer starts at most as many conversions as streams; joining one is free.
       const ip = clientIp(req);
       const startedBy = (remuxBy.get(ip) || []).filter((k) => remux.has(k));
-      const key0 = remux.keyOf(url);
-      if (!remux.has(key0) && startedBy.length >= maxStreams)
-        return send(res, 429, 'too many streams from this address');
-      const key = await remux.start(url);
-      if (!startedBy.includes(key)) remuxBy.set(ip, [...startedBy, key]);
+      const key0 = remux.keyOf(url, opts);
+      // Seeking a film replaces that viewer's previous position in it.
+      if (opts.vod) {
+        for (const k of startedBy) if (k !== key0 && remux.urlOf(k) === url) remux.stop(k);
+      }
+      const live = startedBy.filter((k) => remux.has(k));
+      if (!remux.has(key0) && live.length >= maxStreams) return send(res, 429, 'too many streams from this address');
+      const key = await remux.start(url, opts);
+      if (!live.includes(key)) remuxBy.set(ip, [...live, key]);
       const text = await remux.playlist(key);
-      const body = text.replace(/^(seg\d+\.ts)$/gm, `/hls/s/${key}/$1`);
+      let body = text
+        .replace(/^(seg\d+\.(?:ts|m4s))$/gm, `/hls/s/${key}/$1`)
+        .replace(/URI="(init\.mp4)"/g, `URI="/hls/s/${key}/$1"`);
+      // A film still being converted looks live to a player, which would start
+      // it near the newest segment instead of at the beginning.
+      if (opts.vod && !body.includes('#EXT-X-START'))
+        body = body.replace(/^#EXTM3U\s*$/m, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES');
       return send(res, 200, body, { 'content-type': 'application/vnd.apple.mpegurl' });
     } catch (e) {
       return send(res, e.status || 502, e.message);

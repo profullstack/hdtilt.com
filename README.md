@@ -12,8 +12,9 @@ hdtilt is a player. It ships with no content. You add a playlist from a provider
 - **TV guide:** XMLTV (plain or `.gz`), taken from the playlist's `url-tvg` or given by hand. Channels are matched by `tvg-id`, then by name. Shows what's on now and next, with progress bars and a full guide grid.
 - **Catch-up:** Xtream timeshift, plus the M3U `catchup` / `catchup-source` / `tvg-rec` forms (`default`, `append`, `shift`, `flussonic`).
 - **Playback** through [`@profullstack/player`](https://github.com/profullstack/player): HLS (hls.js), MPEG-TS (mpegts.js) and MP4. It restarts stalled live streams and explains codec failures.
-- **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/guide` (lists take `?q=` to filter), `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
-- **A global nav** with Live TV (with a filter box), TV Guide, ★ Favorites, Recent, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
+- **Movies & Shows:** an Xtream line's films and series in their own tab, a category at a time (a big line has hundreds of thousands of titles, so nothing loads them all at once). Search covers every title; a show opens into seasons and episodes; Continue watching resumes where you stopped, and the next episode follows. Providers serve films as ripped, usually MKV with AC-3 / E-AC-3 / DTS sound that no browser plays, so the server converts them on the fly: the picture is copied, only the sound becomes AAC (cheap), delivered as HLS. Seeking past what is converted restarts the conversion there. ◀ / ▶ jump 10 s / 30 s, `n` is the next episode. A plain M3U's `/movie/` and `/series/` entries show up there too.
+- **One page per view:** `/watch/<channel>`, `/channels/<group>`, `/favorites`, `/recent`, `/guide` (lists take `?q=` to filter), `/vod/movies/<category>`, `/vod/shows/<category>`, `/vod/show/<id>`, `/settings`, `/account`. Each can be bookmarked or reloaded, and the browser's Back button (or a remote's) steps back through them.
+- **A global nav** with Live TV (with a filter box), Movies & Shows, TV Guide, ★ Favorites, Recent, Account and Settings. It is always on screen outside the picture; over the picture, Back or Menu brings it up, focused for the remote.
 - **iPhone and iPad Safari:** they have no Media Source Extensions, so they cannot play an MPEG-TS stream directly. hdtilt asks an Xtream line for its HLS version when it offers one, and otherwise the server repackages the stream as HLS (`ffmpeg -c copy`, no transcoding, shared by everyone watching that channel). Self-hosters need `ffmpeg` on the PATH, or `HDTILT_FFMPEG`.
 - **Favorites:** tap ☆ on any channel row or on the channel banner, or press F. They sit under ★ Favorites in the nav and sync with your account.
 - **The TiviMate basics:** ↑/↓ zaps channels, OK opens the list, ◀ opens groups, digits jump to a channel number, Back returns to the last channel. Favorites, recents and search are built in. Works with a mouse, touch, a keyboard or a TV remote (Fire TV, Android TV, webOS, Tizen keys).
@@ -35,8 +36,8 @@ On hdtilt.com an account comes first: sign up (username, email, password), confi
 | Desktop | Electron app (Linux AppImage/deb, macOS dmg, Windows exe) from [Releases](https://github.com/profullstack/hdtilt.com/releases) |
 | CLI | `hdtilt now`, `hdtilt play cnn`, `hdtilt guide 101` … |
 | TUI | `hdtilt tui`: groups, channels and what's on; Enter plays in mpv or VLC |
-| MCP | `hdtilt mcp` (stdio), or `POST /mcp` on any server |
-| API | JSON under `/api`, plus the stream proxy at `/p/` |
+| MCP | `hdtilt mcp` (stdio), or `POST /mcp` on any server; `movies_shows` browses and searches films and series |
+| API | JSON under `/api` (`POST /api/vod` for Movies & Shows), plus the stream proxy at `/p/` and conversions at `/hls/` |
 
 ## Install
 

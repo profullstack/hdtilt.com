@@ -31,9 +31,19 @@ ${base}/hls/film.m3u8
 #EXTINF:-1 group-title="Movies, Classics",Film & Co
 ${base}/hls/film2.m3u8
 `;
+  // An M3U with films and episodes in it, the way m3u_plus lists them.
+  const vodM3u = () => `#EXTM3U
+#EXTINF:-1 group-title="News",News One
+${base}/live/u/pw/1.ts
+#EXTINF:-1 tvg-logo="${base}/logo.png" group-title="Action",The Matrix (1999)
+${base}/movie/u/pw/101.mkv
+#EXTINF:-1 group-title="Drama",Breaking Bad S01 E01
+${base}/series/u/pw/911.mkv
+`;
   const server = createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     if (u.pathname === '/list.m3u') return res.end(m3u());
+    if (u.pathname === '/vod.m3u') return res.end(vodM3u());
     if (u.pathname === '/guide.xml.gz') {
       res.setHeader('content-type', 'application/gzip');
       return res.end(gzipSync(guide()));
@@ -86,6 +96,69 @@ ${base}/hls/film2.m3u8
             },
           ]),
         );
+      // Movies & Shows. Series 9 lists episodes by season (an object), 10 as a list of lists.
+      if (a === 'get_vod_categories')
+        return res.end(
+          JSON.stringify([
+            { category_id: '1', category_name: 'Action' },
+            { category_id: '2', category_name: 'Comedy' },
+          ]),
+        );
+      if (a === 'get_vod_streams') {
+        const all = [
+          {
+            stream_id: 101,
+            name: 'EN - The Matrix (1999)',
+            category_id: '1',
+            container_extension: 'mkv',
+            rating: '8.7',
+            added: '100',
+          },
+          { stream_id: 102, name: 'EN - Matrix Reloaded', category_id: '1', container_extension: 'mp4', added: '300' },
+          { stream_id: 103, name: 'Café Society', category_id: '2', container_extension: 'mkv', added: '200' },
+        ];
+        const c = u.searchParams.get('category_id');
+        return res.end(JSON.stringify(c ? all.filter((m) => m.category_id === c) : all));
+      }
+      if (a === 'get_series_categories') return res.end(JSON.stringify([{ category_id: '5', category_name: 'Drama' }]));
+      if (a === 'get_series') {
+        const all = [
+          {
+            series_id: 9,
+            name: 'Breaking Bad',
+            category_id: '5',
+            cover: '',
+            releaseDate: '2008-01-20',
+            last_modified: '5',
+          },
+          { series_id: 10, name: 'Better Call Saul', category_id: '5', last_modified: '9' },
+        ];
+        const c = u.searchParams.get('category_id');
+        return res.end(JSON.stringify(c ? all.filter((s) => s.category_id === c) : all));
+      }
+      if (a === 'get_series_info') {
+        const ep = (id, n, season) => ({
+          id: String(id),
+          episode_num: n,
+          season,
+          title: `Episode ${n}`,
+          container_extension: 'mkv',
+          info: { duration_secs: 2900, plot: 'Things happen.' },
+        });
+        const id = u.searchParams.get('series_id');
+        if (id === '9')
+          return res.end(
+            JSON.stringify({
+              info: { name: 'Breaking Bad', plot: 'A teacher.', genre: 'Drama', releaseDate: '2008-01-20' },
+              episodes: { 2: [ep(921, 1, 2)], 1: [ep(912, 2, 1), ep(911, 1, 1)] },
+            }),
+          );
+        if (id === '10')
+          return res.end(
+            JSON.stringify({ info: { name: 'Better Call Saul' }, episodes: [[ep(1011, 1, 1)], [ep(1021, 1, 2)]] }),
+          );
+        return res.end('');
+      }
       if (a === 'get_short_epg')
         return res.end(
           JSON.stringify({

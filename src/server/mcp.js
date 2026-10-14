@@ -3,6 +3,7 @@
 import { addPlaylist, channelsFor, findChannels, readConfig } from '../core/config.js';
 import { guideFor, loadGuide, nowNextFor } from '../core/guide.js';
 import { catchupUrl, groupsOf, loadSource } from '../core/sources.js';
+import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
 
 const PROTOCOL = '2025-06-18';
@@ -98,6 +99,23 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: 'movies_shows',
+    description:
+      "Films and series on an Xtream line (or an M3U's /movie/ and /series/ entries): with nothing else, the categories; with category, its titles; with query, a search of every title; with seriesId, that show's episodes. Films and episodes come with their stream URL.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: sourceArg,
+        playlist: playlistArg,
+        kind: { type: 'string', enum: ['movie', 'series'], default: 'movie' },
+        category: { type: 'string', description: 'Category id from the category list' },
+        query: { type: 'string', description: 'Words that must all be in the title' },
+        seriesId: { type: 'number', description: "A show's seriesId, for its episodes" },
+        limit: { type: 'number', default: 50 },
+      },
+    },
+  },
 ];
 
 const fmt = (t) => new Date(t).toISOString().replace(/:\d\d\.\d{3}Z$/, 'Z');
@@ -126,6 +144,12 @@ async function playlistOf(a, ctx) {
   }
   if (ctx.public) throw new Error('this server keeps no playlists; pass source');
   return channelsFor(a.playlist);
+}
+
+/** A saved playlist's source (its login), for tools that ask the provider directly. */
+async function savedSource(name) {
+  const cfg = await readConfig();
+  return cfg.playlists[name || cfg.current] || null;
 }
 
 async function pickOne(a, ctx, q) {
@@ -191,6 +215,28 @@ export async function callTool(name, a = {}, ctx = {}) {
       const url = catchupUrl(ch, pl.source, p.start, p.stop, pl.account?.timeZone);
       if (!url) throw new Error('that channel has no catch-up');
       return { channel: brief(ch), programme: prog(p), url };
+    }
+    case 'movies_shows': {
+      const source = a.source || (!ctx.public && (await savedSource(a.playlist)));
+      if (!source) throw new Error(ctx.public ? 'this server keeps no playlists; pass source' : 'no such playlist');
+      const kind = a.kind === 'series' ? 'series' : 'movie';
+      const limit = a.limit || 50;
+      const r = await browseVod(
+        source,
+        { kind, category: a.category, q: a.query, seriesId: a.seriesId },
+        { fetch: ctx.fetch },
+      );
+      if (r.local) {
+        // A plain M3U: its films are channels already, grouped by group-title.
+        let list = (await playlistOf(a, ctx)).channels.filter((c) => c.kind === (kind === 'series' ? 'series' : 'vod'));
+        if (!a.category && !a.query) return { categories: groupsOf(list) };
+        if (a.category) list = list.filter((c) => c.group === a.category);
+        list = findChannels(list, a.query);
+        return { total: list.length, items: list.slice(0, limit).map((c) => ({ ...brief(c), url: c.url })) };
+      }
+      if (r.show) return r.show;
+      if (r.categories) return r;
+      return { total: r.total ?? r.items.length, items: r.items.slice(0, limit) };
     }
     default:
       throw new Error(`unknown tool ${name}`);
