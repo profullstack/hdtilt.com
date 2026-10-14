@@ -3,6 +3,7 @@
 
 import { attachSource, isTvBrowser } from '@profullstack/player';
 import { indexAt, nowNext, progress } from '../../src/core/epg.js';
+import { filterByWords } from '../../src/core/match.js';
 import { catchupUrl, groupsOf } from '../../src/core/sources.js';
 import { b64urlEncode, proxyPath } from '../../src/core/util.js';
 import * as account from './account.js';
@@ -216,12 +217,9 @@ function groupList() {
   return S.live.filter((c) => c.group === S.group);
 }
 
-/** Name contains it, or it is the channel number. */
+/** Every word in the name or group, any order (core/match.js), or the channel number. */
 function filterChannels(list, query) {
-  if (!query) return list;
-  const q = query.toLowerCase();
-  const n = /^\d+$/.test(q) ? Number(q) : null;
-  return list.filter((c) => c.name.toLowerCase().includes(q) || (n != null && c.chno === n));
+  return filterByWords(list, query);
 }
 
 function setView() {

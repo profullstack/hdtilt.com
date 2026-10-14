@@ -6,6 +6,7 @@
 // hundreds of thousands of titles; a plain M3U's films are already in the
 // channel list (its /movie/ and /series/ entries), so those are browsed here.
 
+import { filterByWords, fold } from '../../src/core/match.js';
 import * as store from './store.js';
 
 const CONTINUE = 'continue';
@@ -97,20 +98,12 @@ function localCats(kind) {
   return [...seen].map(([name, n]) => ({ id: `g:${name}`, name, n }));
 }
 
-const fold = (s) =>
-  String(s || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+// A title is found by its name, and an episode in Continue watching by its show's too.
+const titleText = (x) => [x.name, x.show?.name];
 
-/** Every word, anywhere in the name. */
+/** Every word, anywhere in the title, any order (core/match.js). */
 export function filterTitles(list, q) {
-  const words = fold(q).split(/\s+/).filter(Boolean);
-  if (!words.length) return list;
-  return list.filter((x) => {
-    const n = fold(x.name);
-    return words.every((w) => n.includes(w));
-  });
+  return filterByWords(list, q, titleText);
 }
 
 /**
