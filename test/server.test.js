@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { proxyPath } from '../src/core/util.js';
-import { startServer } from '../src/server/server.js';
+import { startServer, WEB_DIR } from '../src/server/server.js';
 import { fakeProvider } from './fixtures.js';
 
 let P;
@@ -16,6 +17,8 @@ const post = (s, p, body) =>
   fetch(at(s, p), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 beforeAll(async () => {
+  // The static routes serve the built app shell (web/dist, not checked in).
+  if (!existsSync(join(WEB_DIR, 'index.html'))) execFileSync(process.execPath, ['web/build.js'], { stdio: 'inherit' });
   home = await mkdtemp(
     join(process.env.CLAUDE_JOB_DIR ? join(process.env.CLAUDE_JOB_DIR, 'tmp') : tmpdir(), 'hdtilt-'),
   );
