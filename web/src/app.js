@@ -2204,7 +2204,28 @@ function navCurrent() {
   return 'live';
 }
 
+// CrawlProof ad unit in the footer dock (index.html). The element ships without
+// a slot so ad.js's own DOMContentLoaded pass skips it; the first home or
+// settings sheet sets the slot and asks ad.js to fill it, once. Bounded retry
+// while ad.js is still loading, so a blocker never leaves a timer running.
+const AD_SLOT = 'c6fbcad1-a0a7-4bb1-b1af-5eb804047286';
+let adMounted = false;
+function mountAd() {
+  const el = $('cp-ad');
+  if (adMounted || !el) return;
+  adMounted = true;
+  el.dataset.format = 'text_link';
+  el.dataset.slot = AD_SLOT;
+  let tries = 0;
+  const scan = () => {
+    if (window.crawlproofAds?.scan) window.crawlproofAds.scan();
+    else if (++tries < 40) setTimeout(scan, 250);
+  };
+  scan();
+}
+
 function syncNav() {
+  if (S.mode === 'sheet' && $('sheet').dataset.screen !== 'account') mountAd();
   // Over any other view, the channel banner is clutter.
   if (S.mode !== 'tv') $('banner').hidden = true;
   const on = S.mode !== 'tv' || navPinned || navFocus >= 0;

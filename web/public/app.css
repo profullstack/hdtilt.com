@@ -1101,6 +1101,27 @@ body.gated .nav-items button:not(#nav-account) {
   display: block;
   color: var(--text);
 }
+/* CrawlProof ad unit, docked above the footer: zero height until ad.js fills
+   it, and never on the sign-in / account screens. Filled only from
+   mountAd() in app.js, the first time a home or settings sheet opens. */
+.cp-ad {
+  display: block;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+  height: 0;
+  overflow: hidden;
+}
+.cp-ad[data-cp-filled] {
+  height: auto;
+  overflow: visible;
+}
+#sheet[data-screen="account"]:not([hidden]) ~ .ring-dock .cp-ad {
+  display: none;
+}
+#sheet:not([hidden]):not([data-screen="account"]):has(~ .ring-dock .cp-ad[data-cp-filled]) {
+  padding-bottom: 10rem;
+}
 .ring-dock .pfs-footer {
   --pfs-footer-muted: var(--dim);
   border-top: 0;
