@@ -1087,15 +1087,13 @@ body.gated .nav-items button:not(#nav-account) {
 
 /* Footer (own copyright row + the pit.world network footer): only while the
    sheet is up, docked under it. */
-.ring-dock,
-.ad-dock {
+.ring-dock {
   display: none;
 }
 #sheet:not([hidden]) {
   padding-bottom: 6rem;
 }
-#sheet:not([hidden]) ~ .ring-dock,
-#sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
+#sheet:not([hidden]) ~ .ring-dock {
   position: absolute;
   left: 0;
   right: 0;
@@ -1125,13 +1123,24 @@ body.gated .nav-items button:not(#nav-account) {
 .ring-dock .pit-foot-links > button {
   color: var(--accent);
 }
-/* CrawlProof ad unit, docked at the top of the sheet: zero height until ad.js
-   fills it, and never on the sign-in / account screens. Filled only from
-   mountAd() in app.js, the first time a home or settings sheet opens. */
+/* CrawlProof ad unit, docked at the top of the sheet (under the nav): zero
+   height until ad.js fills it, and never on the sign-in / account screens.
+   Filled only from mountAd() in app.js, the first time a home or settings
+   sheet opens. */
+.ad-dock {
+  display: none;
+}
 #sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
   top: 0;
-  bottom: auto;
-  padding-top: 0.75rem;
+  z-index: 11;
+  display: block;
+  color: var(--text);
+}
+body.nav-on #sheet:not([hidden]) ~ .ad-dock {
+  top: var(--nav-h);
 }
 .cp-ad {
   display: block;
@@ -1144,9 +1153,10 @@ body.gated .nav-items button:not(#nav-account) {
 .cp-ad[data-cp-filled] {
   height: auto;
   overflow: visible;
+  padding: 0.6rem 1rem;
 }
 #sheet:not([hidden]):not([data-screen="account"]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
-  padding-top: 5rem;
+  padding-top: 4rem;
 }
 
 /* ---- Movies & Shows ---------------------------------------------------------- */
