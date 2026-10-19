@@ -1101,9 +1101,25 @@ body.gated .nav-items button:not(#nav-account) {
   display: block;
   color: var(--text);
 }
-/* CrawlProof ad unit, docked above the footer: zero height until ad.js fills
-   it, and never on the sign-in / account screens. Filled only from
-   mountAd() in app.js, the first time a home or settings sheet opens. */
+/* CrawlProof ad unit, docked at the top of the sheet (under the nav): zero
+   height until ad.js fills it, and never on the sign-in / account screens.
+   Filled only from mountAd() in app.js, the first time a home or settings
+   sheet opens. */
+.ad-dock {
+  display: none;
+}
+#sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 11;
+  display: block;
+  color: var(--text);
+}
+body.nav-on #sheet:not([hidden]) ~ .ad-dock {
+  top: var(--nav-h);
+}
 .cp-ad {
   display: block;
   max-width: 48rem;
@@ -1115,12 +1131,10 @@ body.gated .nav-items button:not(#nav-account) {
 .cp-ad[data-cp-filled] {
   height: auto;
   overflow: visible;
+  padding: 0.6rem 1rem;
 }
-#sheet[data-screen="account"]:not([hidden]) ~ .ring-dock .cp-ad {
-  display: none;
-}
-#sheet:not([hidden]):not([data-screen="account"]):has(~ .ring-dock .cp-ad[data-cp-filled]) {
-  padding-bottom: 10rem;
+#sheet:not([hidden]):not([data-screen="account"]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
+  padding-top: 4rem;
 }
 .ring-dock .pfs-footer {
   --pfs-footer-muted: var(--dim);
