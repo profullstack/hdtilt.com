@@ -2204,7 +2204,7 @@ function navCurrent() {
   return 'live';
 }
 
-// CrawlProof ad unit in the footer dock (index.html). The element ships without
+// CrawlProof ad unit in the top-of-sheet ad dock (index.html). The element ships without
 // a slot so ad.js's own DOMContentLoaded pass skips it; the first home or
 // settings sheet sets the slot and asks ad.js to fill it, once. Bounded retry
 // while ad.js is still loading, so a blocker never leaves a timer running.
