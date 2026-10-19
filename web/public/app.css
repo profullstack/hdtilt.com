@@ -1085,14 +1085,17 @@ body.gated .nav-items button:not(#nav-account) {
   min-width: 0;
 }
 
-/* @profullstack/footer: only while the sheet is up, docked under it. */
-.ring-dock {
+/* Footer (own copyright row + the pit.world network footer): only while the
+   sheet is up, docked under it. */
+.ring-dock,
+.ad-dock {
   display: none;
 }
 #sheet:not([hidden]) {
   padding-bottom: 6rem;
 }
-#sheet:not([hidden]) ~ .ring-dock {
+#sheet:not([hidden]) ~ .ring-dock,
+#sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
   position: absolute;
   left: 0;
   right: 0;
@@ -1101,9 +1104,35 @@ body.gated .nav-items button:not(#nav-account) {
   display: block;
   color: var(--text);
 }
-/* CrawlProof ad unit, docked above the footer: zero height until ad.js fills
-   it, and never on the sign-in / account screens. Filled only from
+.site-foot {
+  margin: 0;
+  padding: 0.75rem 1rem 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+.site-foot a {
+  color: inherit;
+}
+/* The pit.world snippet is styled for light pages; this app is always dark. */
+.ring-dock .pit-foot {
+  color: var(--dim);
+}
+.ring-dock .pit-foot b {
+  color: var(--text);
+}
+.ring-dock .pit-foot-links > a,
+.ring-dock .pit-foot-links > button {
+  color: var(--accent);
+}
+/* CrawlProof ad unit, docked at the top of the sheet: zero height until ad.js
+   fills it, and never on the sign-in / account screens. Filled only from
    mountAd() in app.js, the first time a home or settings sheet opens. */
+#sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
+  top: 0;
+  bottom: auto;
+  padding-top: 0.75rem;
+}
 .cp-ad {
   display: block;
   max-width: 48rem;
@@ -1116,15 +1145,8 @@ body.gated .nav-items button:not(#nav-account) {
   height: auto;
   overflow: visible;
 }
-#sheet[data-screen="account"]:not([hidden]) ~ .ring-dock .cp-ad {
-  display: none;
-}
-#sheet:not([hidden]):not([data-screen="account"]):has(~ .ring-dock .cp-ad[data-cp-filled]) {
-  padding-bottom: 10rem;
-}
-.ring-dock .pfs-footer {
-  --pfs-footer-muted: var(--dim);
-  border-top: 0;
+#sheet:not([hidden]):not([data-screen="account"]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
+  padding-top: 5rem;
 }
 
 /* ---- Movies & Shows ---------------------------------------------------------- */
