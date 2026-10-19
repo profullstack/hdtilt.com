@@ -1085,7 +1085,7 @@ body.gated .nav-items button:not(#nav-account) {
   min-width: 0;
 }
 
-/* Footer (own copyright row + the pit.world network footer): only while the
+/* Footer (@profullstack/footer + the pit.world network footer): only while the
    sheet is up, docked under it. */
 .ring-dock {
   display: none;
@@ -1102,15 +1102,9 @@ body.gated .nav-items button:not(#nav-account) {
   display: block;
   color: var(--text);
 }
-.site-foot {
-  margin: 0;
-  padding: 0.75rem 1rem 0;
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--dim);
-}
-.site-foot a {
-  color: inherit;
+.ring-dock .pfs-footer {
+  --pfs-footer-muted: var(--dim);
+  border-top: 0;
 }
 /* The pit.world snippet is styled for light pages; this app is always dark. */
 .ring-dock .pit-foot {

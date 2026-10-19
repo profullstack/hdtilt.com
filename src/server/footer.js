@@ -1,8 +1,16 @@
-// The pit.world network footer, fetched server side from
-// https://pit.world/snippets/footer.html and rendered into the
-// <!--pit-footer--> markers of index.html on every page load. It refetches at
-// most hourly with a 3-second timeout; on failure it keeps the last good copy,
-// or renders nothing, so pit.world being down never breaks the page.
+// Two footers render into index.html's markers on every page load:
+//
+// - <!--pfs-footer-->: the shared Profullstack footer (@profullstack/footer,
+//   copyright + webring) from the @latest template on jsDelivr (cached an hour
+//   by the package; the bundled template if the CDN is down).
+// - <!--pit-footer-->: the pit.world network footer, fetched server side from
+//   https://pit.world/snippets/footer.html, last in the page. It refetches at
+//   most hourly with a 3-second timeout; on failure it keeps the last good
+//   copy, or renders nothing, so pit.world being down never breaks the page.
+import { footerHtml } from '@profullstack/footer';
+
+const RING_OPTIONS = { site: 'https://hdtilt.com/' };
+const RING_REGION = /<!--pfs-footer-->[\s\S]*?<!--\/pfs-footer-->/;
 const URL_ = 'https://pit.world/snippets/footer.html?site=hdtilt.com';
 const TTL = 60 * 60 * 1000;
 const REGION = /<!--pit-footer-->[\s\S]*?<!--\/pit-footer-->/;
@@ -33,6 +41,14 @@ function refresh() {
 
 /** @param {string} html */
 export async function withFooter(html) {
+  if (RING_REGION.test(html)) {
+    try {
+      const ring = await footerHtml(RING_OPTIONS);
+      html = html.replace(RING_REGION, () => `<!--pfs-footer-->${ring}<!--/pfs-footer-->`);
+    } catch {
+      // Leave the markers empty.
+    }
+  }
   if (!REGION.test(html)) return html;
   await refresh();
   return html.replace(REGION, () => `<!--pit-footer-->${cached}<!--/pit-footer-->`);
