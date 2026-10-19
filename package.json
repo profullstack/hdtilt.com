@@ -57,6 +57,7 @@
   "dependencies": {
     "@profullstack/auth-system": "^0.8.3",
     "@profullstack/emailer": "^1.0.3",
+    "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.10.3",
     "@profullstack/player": "^0.14.0",
     "jsonwebtoken": "^9.0.2",
