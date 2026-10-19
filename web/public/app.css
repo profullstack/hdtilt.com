@@ -1085,7 +1085,8 @@ body.gated .nav-items button:not(#nav-account) {
   min-width: 0;
 }
 
-/* @profullstack/footer: only while the sheet is up, docked under it. */
+/* Footer (own copyright row + the pit.world network footer): only while the
+   sheet is up, docked under it. */
 .ring-dock {
   display: none;
 }
@@ -1100,6 +1101,27 @@ body.gated .nav-items button:not(#nav-account) {
   z-index: 11;
   display: block;
   color: var(--text);
+}
+.site-foot {
+  margin: 0;
+  padding: 0.75rem 1rem 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+.site-foot a {
+  color: inherit;
+}
+/* The pit.world snippet is styled for light pages; this app is always dark. */
+.ring-dock .pit-foot {
+  color: var(--dim);
+}
+.ring-dock .pit-foot b {
+  color: var(--text);
+}
+.ring-dock .pit-foot-links > a,
+.ring-dock .pit-foot-links > button {
+  color: var(--accent);
 }
 /* CrawlProof ad unit, docked at the top of the sheet (under the nav): zero
    height until ad.js fills it, and never on the sign-in / account screens.
@@ -1135,10 +1157,6 @@ body.nav-on #sheet:not([hidden]) ~ .ad-dock {
 }
 #sheet:not([hidden]):not([data-screen="account"]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
   padding-top: 4rem;
-}
-.ring-dock .pfs-footer {
-  --pfs-footer-muted: var(--dim);
-  border-top: 0;
 }
 
 /* ---- Movies & Shows ---------------------------------------------------------- */
