@@ -1486,6 +1486,7 @@ function openSetup(first = true) {
   closeAll();
   S.mode = 'sheet';
   $('sheet').dataset.screen = 'settings';
+  delete $('sheet').dataset.ad;
   syncNav();
   const sheet = $('sheet');
   sheet.hidden = false;
@@ -1579,6 +1580,8 @@ function openSettings() {
   closeAll();
   S.mode = 'sheet';
   $('sheet').dataset.screen = 'settings';
+  // The only screen that carries the ad (never the home/setup screen).
+  $('sheet').dataset.ad = '1';
   syncNav();
   const sheet = $('sheet');
   sheet.hidden = false;
@@ -1754,6 +1757,7 @@ function sheet(screen, html) {
   S.mode = 'sheet';
   const sh = $('sheet');
   sh.dataset.screen = screen;
+  delete sh.dataset.ad;
   sh.hidden = false;
   sh.innerHTML = `<div class="card">${html}</div>`;
   syncNav();
@@ -2204,18 +2208,24 @@ function navCurrent() {
   return 'live';
 }
 
-// CrawlProof ad unit in the top-of-sheet ad dock (index.html). The element ships without
-// a slot so ad.js's own DOMContentLoaded pass skips it; the first home or
-// settings sheet sets the slot and asks ad.js to fill it, once. Bounded retry
+// CrawlProof ad unit in the top-of-sheet ad dock (index.html): one low-profile
+// text_link line, only on the Settings sheet, never on the home/setup screen.
+// The page ships with an empty dock (no ad element in the homepage HTML); the
+// first Settings sheet creates the unit and asks ad.js to fill it, once. Bounded retry
 // while ad.js is still loading, so a blocker never leaves a timer running.
 const AD_SLOT = 'c6fbcad1-a0a7-4bb1-b1af-5eb804047286';
 let adMounted = false;
 function mountAd() {
-  const el = $('cp-ad');
-  if (adMounted || !el) return;
+  const dock = document.querySelector('.ad-dock');
+  if (adMounted || !dock) return;
   adMounted = true;
+  const el = document.createElement('aside');
+  el.id = 'cp-ad';
+  el.className = 'cp-ad';
+  el.setAttribute('data-cp-ad', '');
   el.dataset.format = 'text_link';
   el.dataset.slot = AD_SLOT;
+  dock.append(el);
   let tries = 0;
   const scan = () => {
     if (window.crawlproofAds?.scan) window.crawlproofAds.scan();
@@ -2225,7 +2235,7 @@ function mountAd() {
 }
 
 function syncNav() {
-  if (S.mode === 'sheet' && $('sheet').dataset.screen !== 'account') mountAd();
+  if (S.mode === 'sheet' && $('sheet').dataset.ad) mountAd();
   // Over any other view, the channel banner is clutter.
   if (S.mode !== 'tv') $('banner').hidden = true;
   const on = S.mode !== 'tv' || navPinned || navFocus >= 0;
