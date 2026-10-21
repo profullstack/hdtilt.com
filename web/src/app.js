@@ -29,6 +29,23 @@ const esc = (s) =>
 const hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const isTv = isTvBrowser(navigator.userAgent);
 
+// On a TV the picture belongs on the whole screen, and reaching a small ⛶
+// button with a remote is a chore. Browsers only allow fullscreen from a
+// touch or key press, so the first one does it, and so does picking a
+// channel or film. Leaving fullscreen is honoured until the next pick. On by
+// default on a TV browser; ?fullscreen=on|off overrides that, and is remembered.
+{
+  const asked = new URLSearchParams(location.search).get('fullscreen');
+  if (asked === 'on' || asked === 'off') store.prefs.write('fullscreen', asked);
+}
+const fsAuto = store.prefs.read('fullscreen', isTv ? 'on' : 'off') === 'on';
+let fsDeclined = false;
+function autoFullscreen() {
+  if (!fsAuto || fsDeclined || document.fullscreenElement || !document.fullscreenEnabled) return;
+  if (navigator.userActivation && !navigator.userActivation.isActive) return;
+  document.documentElement.requestFullscreen?.().catch(() => {});
+}
+
 const FAV = '★ Favorites';
 const RECENT = '↺ Recent';
 const ALL = 'All channels';
@@ -253,6 +270,8 @@ function setView() {
 async function play(ch, { viaProxy = false, url = null, programme = null } = {}) {
   if (!ch) return;
   if (ch.kind && ch.kind !== 'live') return playVod(ch);
+  fsDeclined = false;
+  autoFullscreen();
   if (S.vod) {
     saveVodPos();
     S.vod = null;
@@ -335,6 +354,9 @@ const PLAIN_VIDEO = new Set(['h264', 'vp9', 'av1', 'vp8']);
 async function playVod(item, { start = null, remuxed = false, show = undefined } = {}) {
   if (!item) return;
   if (S.vod && S.vod.item.id !== item.id) saveVodPos();
+  // A seek restarts the same title: leaving fullscreen is still honoured then.
+  if (S.vod?.item.id !== item.id) fsDeclined = false;
+  autoFullscreen();
   if (S.playing && S.playing.kind === 'live') S.previous = S.playing;
   show = show === undefined ? (S.vod?.item.id === item.id ? S.vod.show : vodShowFor(item)) : show;
   S.playing = item;
@@ -761,6 +783,13 @@ function soundOn(e) {
   if (/for sound/.test($('stage-msg').textContent)) stageMsg('');
 }
 for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, soundOn, true);
+
+addEventListener('keydown', (e) => e.key !== 'Escape' && autoFullscreen(), true);
+addEventListener('pointerdown', autoFullscreen, true);
+// Back or Esc on a remote leaves fullscreen without asking us: that counts as a no.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) fsDeclined = true;
+});
 
 function hideChrome() {
   // The subtitles panel sits on the banner: it stays up until it is closed.
