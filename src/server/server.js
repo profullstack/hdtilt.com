@@ -19,6 +19,7 @@ import { b64urlDecode, proxyPath } from '../core/util.js';
 import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
 import { createAccounts } from './accounts.js';
+import { crawlAnswer, createCrawlGate } from './crawl.js';
 import { withFooter } from './footer.js';
 import { handleRpc } from './mcp.js';
 import { createRemuxer, hasFfmpeg } from './remux.js';
@@ -55,6 +56,8 @@ export function createApp(opts = {}) {
   const allowPrivate = opts.allowPrivate ?? (process.env.HDTILT_ALLOW_PRIVATE === '1' || !isPublic);
   const maxStreams = opts.maxStreamsPerIp ?? (isPublic ? 3 : Number.POSITIVE_INFINITY);
   const streamsByIp = new Map();
+  // Training crawlers pay for a day pass on hdtilt.com; never on a local server.
+  const crawlGate = opts.crawlGate !== undefined ? opts.crawlGate : isPublic ? createCrawlGate() : null;
 
   /** fetch, routed through the SSRF guard. */
   const guardedFetch = async (url, init = {}) => {
@@ -593,6 +596,7 @@ export function createApp(opts = {}) {
     const url = new URL(req.url, 'http://x');
     const path = url.pathname;
     try {
+      if (crawlGate && !isInternal(req) && (await crawlAnswer(crawlGate, req, res))) return;
       if (req.method === 'OPTIONS') {
         return send(res, 204, '', {
           'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',

@@ -60,6 +60,7 @@
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.10.3",
     "@profullstack/player": "^0.14.0",
+    "@profullstack/x402-gateway": "^0.11.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.23.1"
   },
