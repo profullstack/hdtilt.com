@@ -80,9 +80,9 @@
   <!-- Setup and settings share one sheet. -->
   <section id="sheet" class="sheet" hidden></section>
 
-  <!-- CrawlProof ad unit, docked at the top of a home/settings sheet (never in
-       the footer, never over the picture or on sign-in). -->
-  <div class="ad-dock"><aside id="cp-ad" class="cp-ad" data-cp-ad></aside></div>
+  <!-- CrawlProof text-link ad dock, filled by app.js on the Settings sheet only
+       (never on the home/setup screen, the footer, the picture or sign-in). -->
+  <div class="ad-dock"></div>
 
   <!-- Footer, shown under the setup/settings sheet, never over the picture. The
        server renders @profullstack/footer (copyright + webring) and then the

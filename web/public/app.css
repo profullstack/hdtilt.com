@@ -1118,13 +1118,12 @@ body.gated .nav-items button:not(#nav-account) {
   color: var(--accent);
 }
 /* CrawlProof ad unit, docked at the top of the sheet (under the nav): zero
-   height until ad.js fills it, and never on the sign-in / account screens.
-   Filled only from mountAd() in app.js, the first time a home or settings
-   sheet opens. */
+   height until ad.js fills it, and only on the Settings sheet (data-ad).
+   Created only from mountAd() in app.js, the first time Settings opens. */
 .ad-dock {
   display: none;
 }
-#sheet:not([hidden]):not([data-screen="account"]) ~ .ad-dock {
+#sheet[data-ad]:not([hidden]) ~ .ad-dock {
   position: absolute;
   left: 0;
   right: 0;
@@ -1133,7 +1132,7 @@ body.gated .nav-items button:not(#nav-account) {
   display: block;
   color: var(--text);
 }
-body.nav-on #sheet:not([hidden]) ~ .ad-dock {
+body.nav-on #sheet[data-ad]:not([hidden]) ~ .ad-dock {
   top: var(--nav-h);
 }
 .cp-ad {
@@ -1147,9 +1146,9 @@ body.nav-on #sheet:not([hidden]) ~ .ad-dock {
 .cp-ad[data-cp-filled] {
   height: auto;
   overflow: visible;
-  padding: 0.6rem 1rem;
+  padding: 0.5rem 1rem;
 }
-#sheet:not([hidden]):not([data-screen="account"]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
+#sheet[data-ad]:not([hidden]):has(~ .ad-dock .cp-ad[data-cp-filled]) {
   padding-top: 4rem;
 }
 
