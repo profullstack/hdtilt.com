@@ -40,8 +40,12 @@ const isTv = isTvBrowser(navigator.userAgent);
 }
 const fsAuto = store.prefs.read('fullscreen', isTv ? 'on' : 'off') === 'on';
 let fsDeclined = false;
-function autoFullscreen() {
+function autoFullscreen(e) {
   if (!fsAuto || fsDeclined || document.fullscreenElement || !document.fullscreenEnabled) return;
+  // Not while typing, nor on the account screens: the jump to fullscreen can
+  // close a TV's on-screen keyboard mid-password, and there is no picture yet.
+  if (e?.target?.closest?.('input, textarea, select')) return;
+  if (S.mode === 'sheet' && $('sheet').dataset.screen === 'account') return;
   if (navigator.userActivation && !navigator.userActivation.isActive) return;
   document.documentElement.requestFullscreen?.().catch(() => {});
 }
@@ -784,7 +788,7 @@ function soundOn(e) {
 }
 for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, soundOn, true);
 
-addEventListener('keydown', (e) => e.key !== 'Escape' && autoFullscreen(), true);
+addEventListener('keydown', (e) => e.key !== 'Escape' && autoFullscreen(e), true);
 addEventListener('pointerdown', autoFullscreen, true);
 // Back or Esc on a remote leaves fullscreen without asking us: that counts as a no.
 document.addEventListener('fullscreenchange', () => {
@@ -1511,6 +1515,12 @@ $('guide-grid').addEventListener(
 
 /* ------------------------------------------------------- setup + settings */
 
+// The footer scrolls with the sheet, under the card, rather than sitting on
+// top of it: on a 540px-tall TV a docked footer covered the sign-in button.
+// Every render replaces the sheet's markup, so the node is re-appended after.
+const ringDock = document.querySelector('.ring-dock');
+const dockFooter = () => ringDock && $('sheet').append(ringDock);
+
 function openSetup(first = true) {
   closeAll();
   S.mode = 'sheet';
@@ -1538,6 +1548,7 @@ function openSetup(first = true) {
     </form>
     <p class="note">${api.serverInfo.public ? 'Your playlist and login are kept in this browser only. Streams this page cannot reach directly pass through hdtilt.com. Prefer nothing in between? Get the <a href="https://github.com/profullstack/hdtilt.com#install" target="_blank" rel="noopener">desktop app or CLI</a>.' : 'Running locally: nothing leaves this machine.'} Open source: <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">github.com/profullstack/hdtilt.com</a></p>
   </div>`;
+  dockFooter();
   let tab = 'm3u';
   sheet.querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {
@@ -1633,6 +1644,7 @@ function openSettings() {
     <p class="sub">↑ ↓ change channel · OK channel list · Space play/pause · + − volume · ◀ groups · G guide · ☆ or F favorite · 0–9 channel number · ⌫ last channel · / or ↑ from the top row: filter, and the guide’s ☆ Favorites only · M mute · Esc back</p>
     <p class="note">hdtilt ${esc(api.serverInfo.version)} · open source, MIT · <a href="https://github.com/profullstack/hdtilt.com" target="_blank" rel="noopener">source</a> · CLI, TUI, MCP and API included</p>
   </div>`;
+  dockFooter();
   $('s-add').onclick = () => go('/settings/add');
   $('s-close').onclick = () => back();
   $('s-copy')?.addEventListener('click', () => navigator.clipboard?.writeText(S.playing.url));
@@ -1779,6 +1791,36 @@ function homeKey(e) {
   return true;
 }
 
+/**
+ * Up and Down on every other sheet (sign-in, settings): one control to the
+ * next, fields included, since a text field keeps the arrows to itself and a
+ * remote has no Tab. Up from the first control goes to the nav.
+ */
+function sheetKey(e) {
+  const k = e.key;
+  if ((k !== 'ArrowUp' && k !== 'ArrowDown') || onHome()) return false;
+  const t = e.target;
+  if (t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t.type === 'range') return false;
+  const all = [
+    ...$('sheet').querySelectorAll(
+      'input:not([type=hidden]):not([disabled]), button:not([disabled]), a[href], select, textarea',
+    ),
+  ].filter((x) => x.getClientRects().length);
+  if (!all.length) return false;
+  const i = all.indexOf(t);
+  if (k === 'ArrowUp' && i <= 0) {
+    if (t instanceof HTMLInputElement) t.blur();
+    focusNav();
+  } else {
+    const next = all[k === 'ArrowDown' ? Math.min(all.length - 1, i + 1) : i - 1];
+    next.focus();
+    // focus() leaves a half-visible control where it is.
+    next.scrollIntoView({ block: 'nearest' });
+  }
+  e.preventDefault();
+  return true;
+}
+
 /* ------------------------------------------------------------- account */
 
 function sheet(screen, html) {
@@ -1789,6 +1831,7 @@ function sheet(screen, html) {
   delete sh.dataset.ad;
   sh.hidden = false;
   sh.innerHTML = `<div class="card">${html}</div>`;
+  dockFooter();
   syncNav();
   setTimeout(() => sh.querySelector('input')?.focus(), 50);
   return sh;
@@ -2415,6 +2458,7 @@ addEventListener('keydown', (e) => {
   }
   if (S.mode === 'sheet') {
     if ($('sheet').dataset.screen === 'home' && homeKey(e)) return;
+    if (sheetKey(e)) return;
     if (e.key === 'ArrowUp' && !(e.target instanceof HTMLInputElement) && e.target.closest?.('.card') == null)
       return focusNav();
     if (e.key === 'Escape' || e.key === 'GoBack' || BACK_CODES.has(e.keyCode)) {
