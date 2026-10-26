@@ -2477,7 +2477,7 @@ addEventListener('keydown', (e) => {
     const k = e.key;
     if (k === 'ArrowRight') navFocus = (navFocus + 1) % n;
     else if (k === 'ArrowLeft') navFocus = (navFocus - 1 + n) % n;
-    else if (k === 'Enter' || k === ' ') return e.preventDefault(), navAct(navButtons()[navFocus].dataset.act);
+    else if (k === 'Enter' || k === ' ') return (e.preventDefault(), navAct(navButtons()[navFocus].dataset.act));
     else if (k === 'ArrowDown' || k === 'Escape' || k === 'GoBack' || BACK_CODES.has(e.keyCode)) {
       navFocus = -1;
       if (S.mode === 'tv') hideChrome();

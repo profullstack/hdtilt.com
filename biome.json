@@ -1,12 +1,12 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
   "files": { "includes": ["**", "!web/dist", "!dist-desktop", "!node_modules"] },
   "css": { "linter": { "enabled": true } },
   "formatter": { "indentStyle": "space", "lineWidth": 120 },
   "javascript": { "formatter": { "quoteStyle": "single" } },
   "linter": {
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "style": { "noParameterAssign": "off", "noDescendingSpecificity": "off" },
       "suspicious": { "noAssignInExpressions": "off" },
       "complexity": { "noCommaOperator": "off", "noImportantStyles": "off" },
