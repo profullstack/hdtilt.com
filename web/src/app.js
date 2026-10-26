@@ -2,6 +2,7 @@
 // overlay that a remote, a keyboard, a mouse or a finger can drive.
 
 import { attachSource, isTvBrowser } from '@profullstack/player';
+import { renderProfileFields } from '@profullstack/profile';
 import { indexAt, nowNext, progress } from '../../src/core/epg.js';
 import { filterByWords } from '../../src/core/match.js';
 import { catchupUrl, groupsOf } from '../../src/core/sources.js';
@@ -1849,6 +1850,15 @@ const busy = async (btn, label, fn) => {
   }
 };
 
+/** The shared profile fields (@profullstack/profile); the form already has its own email box. */
+const PROFILE_FIELDS = ['first_name', 'last_name', 'company_domain', 'job_title', 'linkedin_url'];
+const profileFields = (values = {}) =>
+  renderProfileFields({ fields: PROFILE_FIELDS, idPrefix: 'a-', values }).replaceAll(
+    '<input ',
+    '<input class="field" ',
+  );
+const profileValues = (form) => Object.fromEntries(PROFILE_FIELDS.map((n) => [n, form.elements[n].value.trim()]));
+
 /** Sign in, create an account, or (signed in) the account itself. `after` runs after sign-in. */
 function openAccount({ tab = 'in', after = null, note = '' } = {}) {
   const u = account.current();
@@ -1859,8 +1869,24 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       <p class="sub">${esc(u.email)}</p>
       <p class="sub">Your playlists, favorites and recent channels follow you to every device you sign in on, including <code>hdtilt tui</code> after <code>hdtilt login</code>.</p>
       <div class="actions"><button class="btn primary" id="a-sync">Sync now</button><button class="btn" id="a-out">Sign out</button><button class="btn" id="a-close">Close</button></div>
-      <div class="err" id="a-err"></div>`,
+      <div class="err" id="a-err"></div>
+      <form id="pf">${profileFields()}<div class="err" id="p-err"></div>
+      <div class="actions"><button class="btn" type="submit">Save profile</button></div></form>`,
     );
+    const pf = sh.querySelector('#pf');
+    account
+      .getProfile()
+      .then(({ profile }) => {
+        for (const n of PROFILE_FIELDS) if (profile?.[n]) pf.elements[n].value = profile[n];
+      })
+      .catch(() => {});
+    pf.onsubmit = (e) => {
+      e.preventDefault();
+      $('p-err').textContent = '';
+      busy(e.submitter, 'Saving…', () => account.saveProfile(profileValues(pf)))
+        .then(() => toast('Profile saved'))
+        .catch((x) => ($('p-err').textContent = x.message));
+    };
     sh.querySelector('#a-sync').onclick = (e) =>
       busy(e.target, 'Syncing…', () => account.syncNow())
         .then(() => toast('Synced'))
@@ -1884,6 +1910,7 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
         tab === 'up'
           ? `<label for="a-user">Username</label><input class="field" id="a-user" autocomplete="username" autocapitalize="none" spellcheck="false" required>
              <label for="a-mail">Email</label><input class="field" id="a-mail" type="email" autocomplete="email" required>
+             ${profileFields()}
              <label for="a-pass">Password (8 or more characters)</label><input class="field" id="a-pass" type="password" autocomplete="new-password" minlength="8" required>`
           : `<label for="a-login">Username or email</label><input class="field" id="a-login" autocomplete="username" autocapitalize="none" spellcheck="false" required>
              <label for="a-pass">Password</label><input class="field" id="a-pass" type="password" autocomplete="current-password" required>`
@@ -1908,7 +1935,9 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
     try {
       if (tab === 'up') {
         const email = $('a-mail').value.trim();
-        await busy(btn, 'Creating…', () => account.register($('a-user').value.trim(), email, $('a-pass').value));
+        await busy(btn, 'Creating…', () =>
+          account.register($('a-user').value.trim(), email, $('a-pass').value, profileValues($('af'))),
+        );
         return openCheckEmail(email);
       }
       await busy(btn, 'Signing in…', () => account.signIn($('a-login').value.trim(), $('a-pass').value));

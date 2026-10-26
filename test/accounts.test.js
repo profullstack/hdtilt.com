@@ -43,6 +43,11 @@ describe('sign up', () => {
       username: 'Viewer_1',
       email: 'Viewer@Example.org',
       password: 'couch-potato',
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      company_domain: 'https://www.Acme.com/about',
+      job_title: 'VP Engineering',
+      linkedin_url: 'in/ada-lovelace',
     });
     expect(r.status).toBe(200);
     expect(mail).toHaveLength(1);
@@ -51,6 +56,18 @@ describe('sign up', () => {
     const login = await post('/api/auth/login', { login: 'viewer_1', password: 'couch-potato' });
     expect(login.status).toBe(401);
     expect((await login.json()).code).toBe('unverified');
+  });
+
+  it('needs a first and last name', async () => {
+    const r = await post('/api/auth/register', {
+      username: 'nameless',
+      email: 'n@example.org',
+      password: 'longenough',
+    });
+    expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.code).toBe('invalid_profile');
+    expect(Object.keys(body.errors).sort()).toEqual(['first_name', 'last_name']);
   });
 
   it('can send the link again', async () => {
@@ -88,6 +105,8 @@ describe('sign up', () => {
       username: 'viewer_1',
       email: 'other@example.org',
       password: 'couch-potato',
+      first_name: 'Grace',
+      last_name: 'Hopper',
     });
     expect((await r.json()).error).toContain('taken');
   });
@@ -97,6 +116,8 @@ describe('sign up', () => {
       username: 'someone',
       email: 'viewer@example.org',
       password: 'couch-potato',
+      first_name: 'Grace',
+      last_name: 'Hopper',
     });
     expect(r.status).toBe(200);
   });
@@ -116,6 +137,35 @@ describe('sign in', () => {
     const a = await (await post('/api/auth/login', { login: 'viewer_1', password: 'nope-nope' })).json();
     const b = await (await post('/api/auth/login', { login: 'ghost', password: 'nope-nope' })).json();
     expect(a.error).toBe(b.error);
+  });
+});
+
+describe('profile', () => {
+  const me = (init = {}) =>
+    fetch(at('/api/v1/me/profile'), {
+      ...init,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}` },
+    });
+  it('needs a session', async () => {
+    const r = await fetch(at('/api/v1/me/profile'));
+    expect(r.status).toBe(401);
+    expect((await r.json()).error).toBeTruthy();
+  });
+  it('kept what the signup form gave, normalized', async () => {
+    const { profile } = await (await me()).json();
+    expect(profile).toMatchObject({
+      email: 'viewer@example.org',
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      company_domain: 'acme.com',
+      job_title: 'VP Engineering',
+      linkedin_url: 'https://www.linkedin.com/in/ada-lovelace',
+    });
+  });
+  it('takes a PATCH from the account sheet', async () => {
+    const r = await me({ method: 'PATCH', body: JSON.stringify({ job_title: 'CTO' }) });
+    expect(r.status).toBe(200);
+    expect((await (await me()).json()).profile).toMatchObject({ job_title: 'CTO', first_name: 'Ada' });
   });
 });
 

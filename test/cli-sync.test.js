@@ -53,7 +53,13 @@ beforeAll(async () => {
     env: { SITE_URL: base, HDTILT_JWT_SECRET: 'cli-secret-cli-secret-cli-secret' },
   });
   srv = await startServer({ port, public: true, accounts, authPerMinute: 1000 });
-  await post('/api/auth/register', { username: 'tvroom', email: 'tv@example.org', password: 'remote-control' });
+  await post('/api/auth/register', {
+    username: 'tvroom',
+    email: 'tv@example.org',
+    password: 'remote-control',
+    first_name: 'Tv',
+    last_name: 'Room',
+  });
   const token = new URL(mail[0].text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
   jwt = (await post('/api/auth/verify', { token })).tokens.accessToken;
   // What the web app would have synced from another device.

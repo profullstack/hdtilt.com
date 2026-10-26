@@ -14,6 +14,13 @@ import { AuthSystem, MemoryAdapter, PostgresAdapter } from '@profullstack/auth-s
 import { createOAuthServer, memoryStore as oauthMemoryStore } from '@profullstack/auth-system/oauth2';
 import { OAUTH2_SCHEMA, postgresStore as oauthPostgresStore } from '@profullstack/auth-system/oauth2/postgres';
 import { createEmailer } from '@profullstack/emailer';
+import {
+  createProfileHandlers,
+  createProfileStore,
+  saveSignupProfile,
+  schemaSql,
+  validateProfile,
+} from '@profullstack/profile';
 import jwt from 'jsonwebtoken';
 
 /** The CLI, TUI and stdio MCP sign in as this client (code + PKCE, loopback). */
@@ -72,6 +79,9 @@ function postgresStore(adapter) {
         blob TEXT NOT NULL,
         version INTEGER NOT NULL DEFAULT 1,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      // The shared profile (name, company, title, LinkedIn): @profullstack/profile's
+      // own user_profiles table, keyed by the auth-system user id (text).
+      await adapter.query(schemaSql({ keyType: 'text' }));
     })());
   return {
     init,
@@ -175,6 +185,21 @@ export function createAccounts(opts = {}) {
     opts.adapter ||
     (env.DATABASE_URL ? new PostgresAdapter({ connectionString: env.DATABASE_URL }) : new MemoryAdapter());
   const store = adapter instanceof PostgresAdapter ? postgresStore(adapter) : memoryStore(adapter);
+  // Profiles ride the same pg pool; with no database, an in-memory SQLite.
+  let profilesReady = null;
+  const profileStore = () =>
+    (profilesReady ??= (async () => {
+      if (adapter instanceof PostgresAdapter) {
+        await store.init();
+        return createProfileStore(adapter, { keyType: 'text' });
+      }
+      const db = globalThis.Bun
+        ? new (await import('bun:sqlite')).Database(':memory:')
+        : new (await import('node:sqlite')).DatabaseSync(':memory:');
+      const profiles = createProfileStore(db);
+      await profiles.migrate();
+      return profiles;
+    })());
   const box = sealer(env.HDTILT_LIBRARY_KEY || `${secret || 'dev'}:library`);
   const mediaKey = createHash('sha256')
     .update(`${secret || 'hdtilt-dev-secret'}:media`)
@@ -282,7 +307,7 @@ export function createAccounts(opts = {}) {
       await store.init();
       await oauth.revoke(token);
     },
-    async register({ username, email, password }) {
+    async register({ username, email, password, ...fields }) {
       username = String(username || '').trim();
       email = String(email || '')
         .trim()
@@ -291,10 +316,18 @@ export function createAccounts(opts = {}) {
         throw new Error('Pick a username of 3 to 30 letters, numbers, dots, dashes or underscores');
       if (!EMAIL.test(email)) throw new Error('That email address does not look right');
       if (String(password || '').length < 8) throw new Error('Use a password of at least 8 characters');
+      const check = validateProfile({ ...fields, email });
+      if (!check.ok) {
+        const err = new Error(Object.values(check.errors)[0]);
+        err.code = 'invalid_profile';
+        err.fields = check.errors;
+        throw err;
+      }
       await store.init();
       if (await store.emailForUsername(username)) throw new Error('That username is taken');
+      let created;
       try {
-        await auth.register({ email, password, profile: { username } });
+        created = await auth.register({ email, password, profile: { username } });
       } catch (e) {
         // Same answer whether or not the address exists, so the form cannot be
         // used to find out who has an account.
@@ -302,7 +335,31 @@ export function createAccounts(opts = {}) {
         if (/unique|duplicate/i.test(e.message)) throw new Error('That username is taken');
         throw e;
       }
+      try {
+        await saveSignupProfile(await profileStore(), created.user.id, check.profile, { email });
+      } catch (e) {
+        // The account exists and the email is on its way: a profile that did not
+        // save is filled in later from the account sheet, never a failed signup.
+        console.warn(`hdtilt: signup profile not saved: ${e.message}`);
+      }
       return { ok: true, sent: true };
+    },
+    /** GET/PUT/PATCH /api/v1/me/profile for a signed-in user (Web Request in, Response out). */
+    async profile(claims, request) {
+      const handlers = createProfileHandlers({
+        store: await profileStore(),
+        getUser: async () => {
+          const u = await adapter.getUserById(claims.userId);
+          return u ? { id: u.id, email: u.email } : null;
+        },
+      });
+      const handle = handlers[request.method];
+      return handle
+        ? handle(request)
+        : new Response(JSON.stringify({ error: 'GET, PUT or PATCH' }), {
+            status: 405,
+            headers: { 'content-type': 'application/json' },
+          });
     },
     async verify(token) {
       let r;

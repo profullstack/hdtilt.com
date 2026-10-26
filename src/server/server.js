@@ -240,7 +240,8 @@ export function createApp(opts = {}) {
       path.startsWith('/api/auth/') ||
       path === '/api/me' ||
       path === '/api/library' ||
-      path === '/api/oauth/authorize'
+      path === '/api/oauth/authorize' ||
+      path === '/api/v1/me/profile'
     ) {
       if (!accounts) return send(res, 404, { error: 'accounts are not enabled on this server' });
       return account(req, res, path);
@@ -385,7 +386,11 @@ export function createApp(opts = {}) {
 
   async function account(req, res, path) {
     const fail = (e, status = 400) =>
-      send(res, e.code === 'conflict' ? 409 : status, { error: e.message, ...(e.code ? { code: e.code } : {}) });
+      send(res, e.code === 'conflict' ? 409 : status, {
+        error: e.message,
+        ...(e.code ? { code: e.code } : {}),
+        ...(e.fields ? { errors: e.fields } : {}),
+      });
     if (path.startsWith('/api/auth/')) {
       if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
       if (limited(clientIp(req))) return send(res, 429, { error: 'Too many tries; wait a minute' });
@@ -431,6 +436,18 @@ export function createApp(opts = {}) {
     if (!claims) return send(res, 401, { error: 'Sign in first' });
     try {
       if (path === '/api/me') return send(res, 200, await accounts.me(claims));
+      if (path === '/api/v1/me/profile') {
+        const write = req.method === 'PUT' || req.method === 'PATCH';
+        const r = await accounts.profile(
+          claims,
+          new Request(`http://hdtilt.local${path}`, {
+            method: req.method,
+            headers: { 'content-type': 'application/json' },
+            ...(write ? { body: JSON.stringify(await readJson(req)) } : {}),
+          }),
+        );
+        return send(res, r.status, await r.json());
+      }
       // The consent page: only a browser session (not another OAuth token) may grant one.
       if (path === '/api/oauth/authorize') {
         if (claims.via === 'oauth') return send(res, 403, { error: 'Sign in on the website to approve' });
