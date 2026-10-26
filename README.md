@@ -31,14 +31,14 @@ On hdtilt.com an account comes first: sign up (username, email, password), confi
 
 ## Every surface
 
-| Surface | How |
-| --- | --- |
-| Web / PWA | [hdtilt.com](https://hdtilt.com), or `hdtilt serve` on your own box |
-| Desktop | Electron app (Linux AppImage/deb, macOS dmg, Windows exe) from [Releases](https://github.com/profullstack/hdtilt.com/releases) |
-| CLI | `hdtilt now`, `hdtilt play cnn`, `hdtilt guide 101` … |
-| TUI | `hdtilt tui`: groups, channels and what's on; Enter plays in mpv or VLC |
-| MCP | `hdtilt mcp` (stdio), or `POST /mcp` on any server; `movies_shows` browses and searches films and series |
-| API | JSON under `/api` (`POST /api/vod` for Movies & Shows), plus the stream proxy at `/p/` and conversions at `/hls/` |
+| Surface   | How                                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Web / PWA | [hdtilt.com](https://hdtilt.com), or `hdtilt serve` on your own box                                                            |
+| Desktop   | Electron app (Linux AppImage/deb, macOS dmg, Windows exe) from [Releases](https://github.com/profullstack/hdtilt.com/releases) |
+| CLI       | `hdtilt now`, `hdtilt play cnn`, `hdtilt guide 101` …                                                                          |
+| TUI       | `hdtilt tui`: groups, channels and what's on; Enter plays in mpv or VLC                                                        |
+| MCP       | `hdtilt mcp` (stdio), or `POST /mcp` on any server; `movies_shows` browses and searches films and series                       |
+| API       | JSON under `/api` (`POST /api/vod` for Movies & Shows), plus the stream proxy at `/p/` and conversions at `/hls/`              |
 
 ## Install
 
@@ -102,22 +102,22 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 
 ## API
 
-| Method | Path | Body / result |
-| --- | --- | --- |
-| GET | `/api/health` | `{ ok, version, public }` |
-| POST | `/api/load` | `{ source }` → `{ channels, groups, epgUrl, account }` |
-| POST | `/api/guide` | `{ url, channels:[{id,name,tvgId}], from?, to? }` → `{ programmes: { [channelId]: [...] } }` |
-| POST | `/api/nownext` | `{ url, channels }` → `{ [channelId]: { now, next } }` |
-| GET | `/api/playlists`, `/api/playlists/:name` | local installs only |
-| POST | `/api/auth/register` `login` `verify` `resend` `forgot` `reset` `refresh` `logout` | accounts (20 tries a minute per address) |
-| GET | `/api/me` | the signed-in account (`Authorization: Bearer`, a session or an OAuth token) |
-| GET / PUT | `/api/library` | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first |
-| GET | `/.well-known/oauth-authorization-server` | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli` |
-| POST | `/api/subtitles` | `{ title?, year?, tmdbId?, season?, episode?, languages?, url? }` → `{ items: [{ fileId, language, release, downloads, hashMatch, … }], moviehash }` |
-| GET | `/subs/<fileId>.vtt?shift=<s>` | one subtitle as WebVTT, cues moved by `shift` seconds |
-| GET | `/hls/<base64url>/index.m3u8` | an MPEG-TS stream repackaged as HLS (for browsers without MSE) |
-| GET | `/p/<base64url>/<name.ext>` | stream proxy; HLS playlists are rewritten so segments and keys come back through it |
-| POST | `/mcp` | MCP JSON-RPC |
+| Method    | Path                                                                               | Body / result                                                                                                                                        |
+| --------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET       | `/api/health`                                                                      | `{ ok, version, public }`                                                                                                                            |
+| POST      | `/api/load`                                                                        | `{ source }` → `{ channels, groups, epgUrl, account }`                                                                                               |
+| POST      | `/api/guide`                                                                       | `{ url, channels:[{id,name,tvgId}], from?, to? }` → `{ programmes: { [channelId]: [...] } }`                                                         |
+| POST      | `/api/nownext`                                                                     | `{ url, channels }` → `{ [channelId]: { now, next } }`                                                                                               |
+| GET       | `/api/playlists`, `/api/playlists/:name`                                           | local installs only                                                                                                                                  |
+| POST      | `/api/auth/register` `login` `verify` `resend` `forgot` `reset` `refresh` `logout` | accounts (20 tries a minute per address)                                                                                                             |
+| GET       | `/api/me`                                                                          | the signed-in account (`Authorization: Bearer`, a session or an OAuth token)                                                                         |
+| GET / PUT | `/api/library`                                                                     | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first                                                                   |
+| GET       | `/.well-known/oauth-authorization-server`                                          | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli`                                                                             |
+| POST      | `/api/subtitles`                                                                   | `{ title?, year?, tmdbId?, season?, episode?, languages?, url? }` → `{ items: [{ fileId, language, release, downloads, hashMatch, … }], moviehash }` |
+| GET       | `/subs/<fileId>.vtt?shift=<s>`                                                     | one subtitle as WebVTT, cues moved by `shift` seconds                                                                                                |
+| GET       | `/hls/<base64url>/index.m3u8`                                                      | an MPEG-TS stream repackaged as HLS (for browsers without MSE)                                                                                       |
+| GET       | `/p/<base64url>/<name.ext>`                                                        | stream proxy; HLS playlists are rewritten so segments and keys come back through it                                                                  |
+| POST      | `/mcp`                                                                             | MCP JSON-RPC                                                                                                                                         |
 
 `source` is `{ "type": "m3u", "url": "…" }` or `{ "type": "xtream", "server": "…", "username": "…", "password": "…" }`, plus an optional `"epg"`.
 

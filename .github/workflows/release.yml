@@ -3,7 +3,7 @@ name: Release
 # npm and attaches desktop installers to the GitHub release.
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 permissions:
   contents: write
   id-token: write
