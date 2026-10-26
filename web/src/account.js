@@ -83,7 +83,11 @@ export async function signIn(login, password) {
   await renewMediaCookie();
   return r.user;
 }
-export const register = (username, email, password) => call('/api/auth/register', { username, email, password });
+export const register = (username, email, password, profile = {}) =>
+  call('/api/auth/register', { ...profile, username, email, password });
+/** The shared profile (name, company, title, LinkedIn) for the signed-in account. */
+export const getProfile = () => call('/api/v1/me/profile', undefined, { auth: true });
+export const saveProfile = (fields) => call('/api/v1/me/profile', fields, { auth: true, method: 'PATCH' });
 export const resend = (email) => call('/api/auth/resend', { email });
 export const forgot = (email) => call('/api/auth/forgot', { email });
 export const reset = (token, password) => call('/api/auth/reset', { token, password });
