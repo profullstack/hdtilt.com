@@ -604,18 +604,29 @@ body.nav-on .clock {
 }
 
 /* ---- sheet (setup + settings) ------------------------------------------- */
+/* A column that scrolls from the top: the card is centred by auto margins,
+   which give way when it is taller than the screen (place-items: center cut
+   the top of a tall card off where scrolling cannot reach), and the footer
+   follows it in the flow instead of covering it. */
 .sheet {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   background: rgba(5, 8, 12, 0.82);
   backdrop-filter: blur(6px);
   z-index: 10;
   overflow-y: auto;
   padding: 1.6rem 16px;
 }
+/* Room around a control the remote scrolls to, focus ring included. */
+.sheet :is(input, button, a) {
+  scroll-margin-block: 1.2rem;
+}
 .card {
+  flex: none;
+  margin-block: auto;
   width: min(100%, 34rem);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -1085,21 +1096,17 @@ body.gated .nav-items button:not(#nav-account) {
   min-width: 0;
 }
 
-/* Footer (@profullstack/footer + the pit.world network footer): only while the
-   sheet is up, docked under it. */
+/* Footer (@profullstack/footer + the pit.world network footer): app.js moves
+   it into the sheet, after the card, so it scrolls under it and never sits on
+   the form. Hidden anywhere else. */
 .ring-dock {
   display: none;
 }
-#sheet:not([hidden]) {
-  padding-bottom: 6rem;
-}
-#sheet:not([hidden]) ~ .ring-dock {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 11;
+.sheet > .ring-dock {
+  flex: none;
   display: block;
+  align-self: stretch;
+  margin: 1.6rem -16px -1.6rem;
   color: var(--text);
 }
 .ring-dock .pfs-footer {
