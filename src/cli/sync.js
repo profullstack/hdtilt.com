@@ -127,3 +127,28 @@ export async function pushQuietly() {
     await sync();
   } catch {}
 }
+
+/* ---- key vault: unlock or lock this account's library on the server ---- */
+
+/**
+ * `hdtilt vault unlock|lock|status`. The passphrase is read here and only the
+ * derived data key goes to the server, which holds it in memory (8h default).
+ */
+export async function vault(action = 'status', { ttl = '8h', recovery = false, read } = {}) {
+  const { bytesToBase64, createSealer, wipe } = await import('@profullstack/sealed-secrets');
+  const sealer = createSealer({ app: 'hdtilt', scope: 'library' });
+  const status = await api('/api/vault');
+  if (action === 'status') return status;
+  if (action === 'lock') return api('/api/vault/lock', { method: 'POST', body: '{}' });
+  if (action !== 'unlock') throw new Error('usage: hdtilt vault [status|unlock|lock] [--ttl 8h] [--recovery]');
+  if (!status.exists) throw new Error('No key vault yet: create one in Account on the website first');
+  const secret = await read(recovery ? 'Recovery key: ' : 'Passphrase: ');
+  const dek = recovery
+    ? await sealer.unlockSealWithRecovery(status.seal, secret.trim(), status.userId)
+    : await sealer.unlockSeal(status.seal, secret, status.userId);
+  try {
+    return await api('/api/vault/unlock', { method: 'POST', body: JSON.stringify({ dek: bytesToBase64(dek), ttl }) });
+  } finally {
+    wipe(dek);
+  }
+}

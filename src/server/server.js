@@ -240,6 +240,9 @@ export function createApp(opts = {}) {
       path.startsWith('/api/auth/') ||
       path === '/api/me' ||
       path === '/api/library' ||
+      path === '/api/vault' ||
+      path === '/api/vault/unlock' ||
+      path === '/api/vault/lock' ||
       path === '/api/oauth/authorize' ||
       path === '/api/v1/me/profile'
     ) {
@@ -386,11 +389,20 @@ export function createApp(opts = {}) {
 
   async function account(req, res, path) {
     const fail = (e, status = 400) =>
-      send(res, e.code === 'conflict' ? 409 : status, {
-        error: e.message,
-        ...(e.code ? { code: e.code } : {}),
-        ...(e.fields ? { errors: e.fields } : {}),
-      });
+      // A locked key vault is 423 (VaultLockedError carries it); sync waits.
+      send(
+        res,
+        e.code === 'conflict'
+          ? 409
+          : e.name === 'VaultLockedError' || [400, 403, 409].includes(e.status)
+            ? e.status
+            : status,
+        {
+          error: e.message,
+          ...(e.code ? { code: e.code } : {}),
+          ...(e.fields ? { errors: e.fields } : {}),
+        },
+      );
     if (path.startsWith('/api/auth/')) {
       if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
       if (limited(clientIp(req))) return send(res, 429, { error: 'Too many tries; wait a minute' });
@@ -454,6 +466,17 @@ export function createApp(opts = {}) {
         const b = await readJson(req);
         return send(res, 200, await accounts.authorize(claims, b.query || {}, b.decision));
       }
+      // The key vault: the browser (or `hdtilt vault unlock`) does the crypto.
+      if (path === '/api/vault') {
+        if (req.method === 'GET') return send(res, 200, await accounts.vaultStatus(claims));
+        if (req.method === 'POST') return send(res, 201, await accounts.createVault(claims, await readJson(req)));
+        if (req.method === 'PUT') return send(res, 200, await accounts.rewrapVault(claims, await readJson(req)));
+        return send(res, 405, { error: 'GET, POST or PUT' });
+      }
+      if (path === '/api/vault/unlock' && req.method === 'POST') {
+        return send(res, 200, await accounts.unlockVault(claims, await readJson(req)));
+      }
+      if (path === '/api/vault/lock' && req.method === 'POST') return send(res, 200, await accounts.lockVault(claims));
       if (req.method === 'GET') return send(res, 200, await accounts.getLibrary(claims));
       if (req.method === 'PUT') return send(res, 200, await accounts.putLibrary(claims, await readJson(req, 8 << 20)));
       return send(res, 405, { error: 'GET or PUT' });

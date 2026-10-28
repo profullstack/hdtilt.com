@@ -1,6 +1,7 @@
 // The signed-in account: its session, the screens that make one, and keeping
 // the library (playlists, favorites, recents) the same on every device.
 
+import { bytesToBase64, createSealer, wipe } from '@profullstack/sealed-secrets';
 import * as store from './store.js';
 
 let session = store.prefs.read('session', null); // { accessToken, refreshToken, user }
@@ -167,3 +168,46 @@ export function mergeLibraries(local, remote) {
   }
   return { playlists: [...byId.values()], favorites, recent, deleted };
 }
+
+/* ------------------------------------------------------------------ key vault */
+// The library is sealed with a passphrase only the account holder knows. All
+// the crypto happens here; the server gets the sealed record and, on unlock,
+// only the derived data key (never the passphrase), held in its memory.
+
+const sealer = createSealer({ app: 'hdtilt', scope: 'library' });
+export const LOST_PASSPHRASE =
+  'If you lose both your passphrase and your recovery key, the library stored on our server is gone for good: nobody here can open it. Your devices keep their own copies.';
+
+export const vaultStatus = () => call('/api/vault', undefined, { auth: true });
+
+async function sendUnlock(dek, ttl) {
+  try {
+    return await call('/api/vault/unlock', { dek: bytesToBase64(dek), ttl }, { auth: true });
+  } finally {
+    wipe(dek);
+  }
+}
+
+/** First time: returns the recovery key, to show once. */
+export async function createVault(passphrase, ttl = '8h') {
+  const { userId } = await vaultStatus();
+  const made = await sealer.createSeal(passphrase, userId);
+  try {
+    await call('/api/vault', { seal: made.seal }, { auth: true });
+  } catch (e) {
+    wipe(made.dek);
+    throw e;
+  }
+  await sendUnlock(made.dek, ttl);
+  return made.recoveryKey;
+}
+
+export async function unlockVault(secret, { recovery = false, ttl = '8h' } = {}) {
+  const { userId, seal } = await vaultStatus();
+  const dek = recovery
+    ? await sealer.unlockSealWithRecovery(seal, secret.trim(), userId)
+    : await sealer.unlockSeal(seal, secret, userId);
+  return sendUnlock(dek, ttl);
+}
+
+export const lockVault = () => call('/api/vault/lock', {}, { auth: true });

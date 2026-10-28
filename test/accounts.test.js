@@ -1,8 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
 import { MemoryAdapter } from '@profullstack/auth-system';
+import { bytesToBase64 } from '@profullstack/sealed-secrets';
 import { createAccounts } from '../src/server/accounts.js';
 import { startServer } from '../src/server/server.js';
+import { sealer as vaultSealer } from '../src/server/vault.js';
+
+let vaultDek;
 
 const mail = [];
 let srv;
@@ -180,6 +184,26 @@ describe('library', () => {
   it('needs a session', async () => {
     expect((await fetch(at('/api/library'))).status).toBe(401);
   });
+  it('is sealed with the account key vault: no vault, no write', async () => {
+    const r = await put(session.accessToken, { data: { playlists: [] }, baseVersion: 0 });
+    expect(r.status).toBe(423);
+    expect((await r.json()).code).toBe('vault_locked');
+  });
+  it('creates and unlocks a vault the way the browser does', async () => {
+    const me = await (
+      await fetch(at('/api/vault'), { headers: { authorization: `Bearer ${session.accessToken}` } })
+    ).json();
+    expect(me.exists).toBe(false);
+    const made = await vaultSealer.createSeal('a long passphrase', me.userId);
+    expect((await post('/api/vault', { seal: made.seal }, session.accessToken)).status).toBe(201);
+    const wrong = await post('/api/vault/unlock', { dek: bytesToBase64(randomBytes(32)) }, session.accessToken);
+    expect(wrong.status).toBe(403);
+    const ok = await (
+      await post('/api/vault/unlock', { dek: bytesToBase64(made.dek), ttl: '1h' }, session.accessToken)
+    ).json();
+    expect(ok.unlocked).toBe(true);
+    vaultDek = made.dek;
+  });
   it('round-trips, and refuses a write based on an old version', async () => {
     expect(await (await get(session.accessToken)).json()).toEqual({ data: null, version: 0 });
     const data = {
@@ -193,6 +217,12 @@ describe('library', () => {
     expect((await (await get(session.accessToken)).json()).data).toEqual(data);
     const stale = await put(session.accessToken, { data: {}, baseVersion: 0 });
     expect(stale.status).toBe(409);
+  });
+  it('locks: reads answer 423 until it is unlocked again', async () => {
+    await post('/api/vault/lock', {}, session.accessToken);
+    expect((await get(session.accessToken)).status).toBe(423);
+    await post('/api/vault/unlock', { dek: bytesToBase64(vaultDek), ttl: '1h' }, session.accessToken);
+    expect((await get(session.accessToken)).status).toBe(200);
   });
 });
 

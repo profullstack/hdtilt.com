@@ -8,8 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryAdapter } from '@profullstack/auth-system';
 import { createTokenStore, login } from '@profullstack/auth-system/cli';
+import { bytesToBase64 } from '@profullstack/sealed-secrets';
 import { createAccounts } from '../src/server/accounts.js';
 import { startServer } from '../src/server/server.js';
+import { sealer } from '../src/server/vault.js';
 
 let srv;
 let base;
@@ -62,6 +64,12 @@ beforeAll(async () => {
   });
   const token = new URL(mail[0].text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
   jwt = (await post('/api/auth/verify', { token })).tokens.accessToken;
+  // The library is sealed with the account's key vault: create and unlock it
+  // the way the browser does, then sync.
+  const me = await (await fetch(`${base}/api/vault`, { headers: { authorization: `Bearer ${jwt}` } })).json();
+  const made = await sealer.createSeal('tv room passphrase', me.userId);
+  await post('/api/vault', { seal: made.seal }, jwt);
+  await post('/api/vault/unlock', { dek: bytesToBase64(made.dek), ttl: '1h' }, jwt);
   // What the web app would have synced from another device.
   await fetch(`${base}/api/library`, {
     method: 'PUT',

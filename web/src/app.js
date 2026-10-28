@@ -1870,6 +1870,14 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       <p class="sub">Your playlists, favorites and recent channels follow you to every device you sign in on, including <code>hdtilt tui</code> after <code>hdtilt login</code>.</p>
       <div class="actions"><button class="btn primary" id="a-sync">Sync now</button><button class="btn" id="a-out">Sign out</button><button class="btn" id="a-close">Close</button></div>
       <div class="err" id="a-err"></div>
+      <h2>Key vault</h2>
+      <p class="sub">Your library holds your provider logins, so it is sealed with a passphrase only you know. Sync works while the vault is unlocked; our server forgets the key on every restart. ${esc(account.LOST_PASSPHRASE)}</p>
+      <div id="v-state" class="sub">Checking…</div>
+      <form id="vf"><input class="field" type="password" name="pass" autocomplete="current-password" placeholder="Passphrase (10+ characters)">
+      <label class="sub"><input type="checkbox" name="recovery"> That is my recovery key</label>
+      <select class="field" name="ttl"><option value="1h">Stay unlocked 1 hour</option><option value="8h" selected>8 hours</option><option value="1d">1 day</option><option value="7d">7 days</option></select>
+      <div class="actions"><button class="btn primary" type="submit" id="v-go">Unlock</button><button class="btn" type="button" id="v-lock">Lock now</button></div>
+      <div class="err" id="v-err"></div></form>
       <form id="pf">${profileFields()}<div class="err" id="p-err"></div>
       <div class="actions"><button class="btn" type="submit">Save profile</button></div></form>`,
     );
@@ -1887,6 +1895,46 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
         .then(() => toast('Profile saved'))
         .catch((x) => ($('p-err').textContent = x.message));
     };
+    const vf = sh.querySelector('#vf');
+    const vaultState = () =>
+      account
+        .vaultStatus()
+        .then((v) => {
+          vf.dataset.exists = v.exists ? '1' : '';
+          $('v-go').textContent = v.exists ? 'Unlock' : 'Create vault';
+          $('v-state').textContent = !v.exists
+            ? 'No vault yet: choose a passphrase to create one.'
+            : v.unlocked
+              ? `Unlocked until ${new Date(v.expiresAt).toLocaleString()}.`
+              : 'Locked: unlock to sync.';
+        })
+        .catch(() => ($('v-state').textContent = ''));
+    vaultState();
+    vf.onsubmit = (e) => {
+      e.preventDefault();
+      $('v-err').textContent = '';
+      const pass = vf.elements.pass.value;
+      const ttl = vf.elements.ttl.value;
+      busy(e.submitter, 'Working…', async () => {
+        if (vf.dataset.exists) await account.unlockVault(pass, { recovery: vf.elements.recovery.checked, ttl });
+        else {
+          const recoveryKey = await account.createVault(pass, ttl);
+          // Shown once, and blocking on purpose: it is the only way back in.
+          window.prompt(
+            'Your recovery key. Save it now (a password manager is ideal); it is shown only once:',
+            recoveryKey,
+          );
+        }
+        vf.elements.pass.value = '';
+        await account.syncNow().catch(() => {});
+      })
+        .then(() => (toast('Vault unlocked'), vaultState()))
+        .catch((x) => ($('v-err').textContent = x.message));
+    };
+    sh.querySelector('#v-lock').onclick = (e) =>
+      busy(e.target, 'Locking…', () => account.lockVault())
+        .then(() => (toast('Vault locked'), vaultState()))
+        .catch((x) => ($('v-err').textContent = x.message));
     sh.querySelector('#a-sync').onclick = (e) =>
       busy(e.target, 'Syncing…', () => account.syncNow())
         .then(() => toast('Synced'))

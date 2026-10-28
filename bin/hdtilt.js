@@ -36,6 +36,9 @@ Subtitles (OpenSubtitles; a free API key from opensubtitles.com/consumers)
 Account (sync playlists and favorites with hdtilt.com)
   hdtilt login [--manual]          sign in through the browser (OAuth 2.1 + PKCE)
   hdtilt whoami | sync | logout
+  hdtilt vault [status|unlock|lock] [--ttl 8h] [--recovery]
+                                   your library is sealed with your passphrase;
+                                   unlock to sync (the passphrase stays here)
 
 Surfaces
   hdtilt tui                       terminal guide
@@ -72,6 +75,8 @@ const { values: o, positionals } = parseArgs({
     host: { type: 'string' },
     public: { type: 'boolean' },
     manual: { type: 'boolean' },
+    ttl: { type: 'string' },
+    recovery: { type: 'boolean' },
     json: { type: 'boolean' },
     limit: { type: 'string', short: 'n' },
     help: { type: 'boolean', short: 'h' },
@@ -305,6 +310,44 @@ const commands = {
     const { whoami, issuer } = await import('../src/cli/sync.js');
     const me = await whoami();
     out(me, () => `${me.username || ''} <${me.email}> on ${issuer()}`);
+  },
+  async vault() {
+    const { vault } = await import('../src/cli/sync.js');
+    const action = args[0] || 'status';
+    // The passphrase is read without echo and never leaves this machine.
+    const read = (prompt) =>
+      new Promise((resolve) => {
+        process.stdout.write(prompt);
+        const stdin = process.stdin;
+        let text = '';
+        stdin.setRawMode?.(true);
+        stdin.resume();
+        stdin.setEncoding('utf8');
+        const onData = (ch) => {
+          if (ch === '\r' || ch === '\n' || ch === '\u0004') {
+            stdin.setRawMode?.(false);
+            stdin.pause();
+            stdin.off('data', onData);
+            process.stdout.write('\n');
+            resolve(text);
+          } else if (ch === '\u0003') process.exit(130);
+          else if (ch === '\u007f') text = text.slice(0, -1);
+          else text += ch;
+        };
+        stdin.on('data', onData);
+      });
+    const r = await vault(action, { ttl: o.ttl || '8h', recovery: Boolean(o.recovery), read });
+    out(r, () =>
+      action === 'status'
+        ? !r.exists
+          ? 'No key vault yet (create one in Account on the website)'
+          : r.unlocked
+            ? `Unlocked until ${r.expiresAt}`
+            : 'Locked'
+        : r.unlocked
+          ? `Unlocked until ${r.expiresAt}${r.migration?.migrated ? ' (library re-sealed)' : ''}`
+          : 'Locked',
+    );
   },
   async sync() {
     const { sync } = await import('../src/cli/sync.js');
