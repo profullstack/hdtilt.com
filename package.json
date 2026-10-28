@@ -62,7 +62,7 @@
     "@profullstack/player": "^0.16.0",
     "@profullstack/profile": "0.1.6",
     "@profullstack/sealed-secrets": "0.1.0",
-    "@profullstack/x402-gateway": "^0.15.2",
+    "@profullstack/x402-gateway": "^0.15.3",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.1"
   },
