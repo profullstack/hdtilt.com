@@ -11,6 +11,7 @@
         "@profullstack/hqtui": "^0.11.0",
         "@profullstack/player": "^0.16.0",
         "@profullstack/profile": "0.1.6",
+        "@profullstack/sealed-secrets": "0.1.0",
         "@profullstack/x402-gateway": "^0.15.2",
         "jsonwebtoken": "^9.0.3",
         "pg": "^8.23.1",
@@ -96,6 +97,8 @@
     "@profullstack/player": ["@profullstack/player@0.16.0", "", { "dependencies": { "hls.js": "^1.7.1", "mpegts.js": "^1.8.2" }, "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-So56P59jh0wCd5gKKa0EIxBZGHm3WKqQGC+uW4N2nCz/heb2+kPQgH4YTJueJXcxwtXpf+Zb1/CWsoxWskfvAA=="],
 
     "@profullstack/profile": ["@profullstack/profile@0.1.6", "", { "peerDependencies": { "@libsql/client": ">=0.6.0", "postgres": "^3.4.0", "react": ">=18" }, "optionalPeers": ["@libsql/client", "postgres", "react"], "bin": { "profile": "src/cli.js" } }, "sha512-xkn0P3ANz151QJdlBwcBXkHk813qW9qAmuTZKcuvpEZYkyHDC9J9KfvpVSRepfjECzz4ONGHWO5Zwc4BHpfK8g=="],
+
+    "@profullstack/sealed-secrets": ["@profullstack/sealed-secrets@0.1.0", "", {}, "sha512-6LRa+yUT7PQ5tZNoYEnf3VVxsyw/dqHqAtYpk/aS/bntxf3mQH+2MwNjQoBd7fCqdN97TvZup8qhrpfUcZlfng=="],
 
     "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.15.2", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-f0el7rPd13StA04OxA0PGrrG0kxg/vvGPtvI0XYn8wlTGPut3G+2UKcMRzSxQdaF4LkYAOLnkg9S+LhmIKvDBA=="],
 

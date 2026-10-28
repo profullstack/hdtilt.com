@@ -6,8 +6,9 @@
 // passkey, and hdtilt lives on TVs. The email is still verified before the
 // account can sign in, and it is how a forgotten password comes back.
 //
-// The library holds provider logins, so it is encrypted at rest (AES-256-GCM,
-// HDTILT_LIBRARY_KEY) and never logged.
+// The library holds provider logins, so it is sealed under the account's own
+// key vault (./vault.js): a passphrase only its owner knows. Sync works while
+// they are unlocked; nothing the server holds at rest opens it. Never logged.
 
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { AuthSystem, MemoryAdapter, PostgresAdapter } from '@profullstack/auth-system';
@@ -22,6 +23,18 @@ import {
   validateProfile,
 } from '@profullstack/profile';
 import jwt from 'jsonwebtoken';
+import {
+  dataKeyFor,
+  isSealedLibrary,
+  isSealRecord,
+  openLibrary,
+  sealLibrary,
+  ttlSeconds,
+  unlockStore,
+  unlockWithDataKey,
+  VaultLockedError,
+  verifyRewrap,
+} from './vault.js';
 
 /** The CLI, TUI and stdio MCP sign in as this client (code + PKCE, loopback). */
 export const CLI_CLIENT_ID = 'hdtilt-cli';
@@ -44,8 +57,8 @@ const USERNAME = /^[a-z0-9][a-z0-9_.-]{2,29}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_LIBRARY = 4 << 20; // a playlist list with logins, not the channels themselves
 
-/** Library ciphertext: base64(iv | tag | data). */
-function sealer(keyText) {
+/** Legacy library ciphertext: base64(iv | tag | data). Migration only. */
+export function sealer(keyText) {
   // A missing key still encrypts (tests, a local install) but with a key derived
   // from the JWT secret, so nothing is ever stored in the clear.
   const key = createHash('sha256').update(String(keyText)).digest();
@@ -82,6 +95,13 @@ function postgresStore(adapter) {
       // The shared profile (name, company, title, LinkedIn): @profullstack/profile's
       // own user_profiles table, keyed by the auth-system user id (text).
       await adapter.query(schemaSql({ keyType: 'text' }));
+      // Key vault records (2026-10-28): the sealed data key per account, nothing
+      // that opens it. See ./vault.js.
+      await adapter.query(`CREATE TABLE IF NOT EXISTS hdtilt_vaults (
+        user_id TEXT PRIMARY KEY,
+        seal JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     })());
   return {
     init,
@@ -114,11 +134,49 @@ function postgresStore(adapter) {
       );
       return rows[0] ? { version: rows[0].version, updatedAt: rows[0].updated_at } : null;
     },
+    /** Re-seal in place (migration): same version, only if nobody wrote meanwhile. */
+    async replaceLibraryBlob(userId, before, after) {
+      await init();
+      await adapter.query('UPDATE hdtilt_libraries SET blob = $3 WHERE user_id = $1 AND blob = $2', [
+        userId,
+        before,
+        after,
+      ]);
+    },
+    async getVault(userId) {
+      await init();
+      const { rows } = await adapter.query('SELECT seal FROM hdtilt_vaults WHERE user_id = $1', [userId]);
+      const seal = rows[0]?.seal;
+      return typeof seal === 'string' ? JSON.parse(seal) : seal || null;
+    },
+    async createVault(userId, seal) {
+      await init();
+      const { rows } = await adapter.query(
+        'INSERT INTO hdtilt_vaults (user_id, seal) VALUES ($1, $2::jsonb) ON CONFLICT (user_id) DO NOTHING RETURNING user_id',
+        [userId, JSON.stringify(seal)],
+      );
+      return rows.length > 0;
+    },
+    async replaceVault(userId, seal) {
+      await init();
+      await adapter.query('UPDATE hdtilt_vaults SET seal = $2::jsonb, updated_at = now() WHERE user_id = $1', [
+        userId,
+        JSON.stringify(seal),
+      ]);
+    },
+    async legacyLibraryCount() {
+      await init();
+      const { rows } = await adapter.query(
+        "SELECT count(*)::int AS n, count(DISTINCT user_id)::int AS users FROM hdtilt_libraries WHERE blob NOT LIKE 'v2:%'",
+      );
+      return rows[0];
+    },
   };
 }
 
-function memoryStore(adapter) {
+export function memoryStore(adapter) {
   const libs = new Map();
+  const vaults = new Map();
   return {
     init: async () => {},
     async emailForUsername(username) {
@@ -135,6 +193,25 @@ function memoryStore(adapter) {
       const next = { blob, version: (cur?.version || 0) + 1, updatedAt: new Date() };
       libs.set(userId, next);
       return { version: next.version, updatedAt: next.updatedAt };
+    },
+    async replaceLibraryBlob(userId, before, after) {
+      const cur = libs.get(userId);
+      if (cur && cur.blob === before) cur.blob = after;
+    },
+    async getVault(userId) {
+      return vaults.get(userId) || null;
+    },
+    async createVault(userId, seal) {
+      if (vaults.has(userId)) return false;
+      vaults.set(userId, seal);
+      return true;
+    },
+    async replaceVault(userId, seal) {
+      vaults.set(userId, seal);
+    },
+    async legacyLibraryCount() {
+      const legacy = [...libs.values()].filter((l) => !String(l.blob).startsWith('v2:'));
+      return { n: legacy.length, users: legacy.length };
     },
   };
 }
@@ -184,7 +261,8 @@ export function createAccounts(opts = {}) {
   const adapter =
     opts.adapter ||
     (env.DATABASE_URL ? new PostgresAdapter({ connectionString: env.DATABASE_URL }) : new MemoryAdapter());
-  const store = adapter instanceof PostgresAdapter ? postgresStore(adapter) : memoryStore(adapter);
+  // `opts.store` lets a test hand in a pre-filled store (legacy rows).
+  const store = opts.store || (adapter instanceof PostgresAdapter ? postgresStore(adapter) : memoryStore(adapter));
   // Profiles ride the same pg pool; with no database, an in-memory SQLite.
   let profilesReady = null;
   const profileStore = () =>
@@ -200,7 +278,14 @@ export function createAccounts(opts = {}) {
       await profiles.migrate();
       return profiles;
     })());
-  const box = sealer(env.HDTILT_LIBRARY_KEY || `${secret || 'dev'}:library`);
+  // The OLD server-held key (HDTILT_LIBRARY_KEY, or derived from the JWT secret).
+  // Read only by the one-shot migration into each account's vault, and not at
+  // all after LEGACY_KEY_MIGRATION=off.
+  const legacyBox = sealer(env.HDTILT_LIBRARY_KEY || `${secret || 'dev'}:library`);
+  const legacyOn =
+    String(env.LEGACY_KEY_MIGRATION ?? 'on')
+      .trim()
+      .toLowerCase() !== 'off';
   const mediaKey = createHash('sha256')
     .update(`${secret || 'hdtilt-dev-secret'}:media`)
     .digest();
@@ -465,10 +550,15 @@ export function createAccounts(opts = {}) {
     async getLibrary(claims) {
       const row = await store.getLibrary(claims.userId);
       if (!row) return { data: null, version: 0 };
-      return { data: box.open(row.blob), version: row.version, updatedAt: row.updatedAt };
+      if (!isSealedLibrary(row.blob)) {
+        // Still under the old key: the owner's next unlock re-seals it.
+        throw new VaultLockedError(dataKeyFor(claims.userId) ? 'legacy_unmigrated' : 'vault_locked');
+      }
+      return { data: await openLibrary(claims.userId, row.blob), version: row.version, updatedAt: row.updatedAt };
     },
     async putLibrary(claims, { data, baseVersion }) {
-      const blob = box.seal(data ?? {});
+      // Throws VaultLockedError (423) while locked: the device keeps its copy.
+      const blob = await sealLibrary(claims.userId, data ?? {});
       if (blob.length > MAX_LIBRARY) throw new Error('That library is too large to sync');
       const r = await store.putLibrary(claims.userId, blob, baseVersion);
       if (!r) {
@@ -478,5 +568,50 @@ export function createAccounts(opts = {}) {
       }
       return r;
     },
+
+    /* ---- key vault (./vault.js): the browser does the crypto ---- */
+    async vaultStatus(claims) {
+      const seal = await store.getVault(claims.userId);
+      return { userId: claims.userId, exists: Boolean(seal), seal, ...unlockStore().status(claims.userId) };
+    },
+    async createVault(claims, { seal }) {
+      if (!isSealRecord(seal)) throw Object.assign(new Error('A sealed vault record is required'), { status: 400 });
+      if (!(await store.createVault(claims.userId, seal))) {
+        throw Object.assign(new Error('You already have a key vault'), { status: 409 });
+      }
+      return { exists: true };
+    },
+    async rewrapVault(claims, { seal, dek }) {
+      const current = await store.getVault(claims.userId);
+      if (!current) throw new VaultLockedError('vault_missing');
+      if (!isSealRecord(seal) || !(await verifyRewrap(claims.userId, current, seal, dek))) {
+        throw Object.assign(new Error('That does not open your vault'), { status: 403 });
+      }
+      await store.replaceVault(claims.userId, seal);
+      return { exists: true };
+    },
+    async unlockVault(claims, { dek, ttl }) {
+      const seal = await store.getVault(claims.userId);
+      if (!seal) throw new VaultLockedError('vault_missing');
+      const status = await unlockWithDataKey(claims.userId, seal, dek, ttlSeconds(ttl));
+      // One-shot migration of a library still under the old server key.
+      let migrated = 0;
+      const row = await store.getLibrary(claims.userId);
+      if (row && !isSealedLibrary(row.blob) && legacyOn) {
+        try {
+          const plain = legacyBox.open(row.blob);
+          await store.replaceLibraryBlob(claims.userId, row.blob, await sealLibrary(claims.userId, plain));
+          migrated = 1;
+        } catch (e) {
+          console.error(`hdtilt: could not re-seal the library of ${claims.userId}: ${e.message}`);
+        }
+      }
+      return { ...status, migration: { migrated } };
+    },
+    async lockVault(claims) {
+      unlockStore().lock(claims.userId);
+      return { unlocked: false, expiresAt: null };
+    },
+    legacyLibraryCount: () => store.legacyLibraryCount(),
   };
 }
