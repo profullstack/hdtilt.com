@@ -279,8 +279,9 @@ export function createAccounts(opts = {}) {
       return profiles;
     })());
   // The OLD server-held key (HDTILT_LIBRARY_KEY, or derived from the JWT secret).
-  // Read only by the one-shot migration into each account's vault, and not at
-  // all after LEGACY_KEY_MIGRATION=off.
+  // Still the library's key for an account with no vault yet (refusing it
+  // locked every library in v0.5.0); read by the one-shot migration when the
+  // vault is created.
   const legacyBox = sealer(env.HDTILT_LIBRARY_KEY || `${secret || 'dev'}:library`);
   const legacyOn =
     String(env.LEGACY_KEY_MIGRATION ?? 'on')
@@ -551,14 +552,22 @@ export function createAccounts(opts = {}) {
       const row = await store.getLibrary(claims.userId);
       if (!row) return { data: null, version: 0 };
       if (!isSealedLibrary(row.blob)) {
-        // Still under the old key: the owner's next unlock re-seals it.
+        // No vault yet: the library is still under the server key, read as
+        // before v0.5.0. Creating the vault (its first unlock) re-seals it.
+        if (legacyOn && !(await store.getVault(claims.userId))) {
+          return { data: legacyBox.open(row.blob), version: row.version, updatedAt: row.updatedAt };
+        }
         throw new VaultLockedError(dataKeyFor(claims.userId) ? 'legacy_unmigrated' : 'vault_locked');
       }
       return { data: await openLibrary(claims.userId, row.blob), version: row.version, updatedAt: row.updatedAt };
     },
     async putLibrary(claims, { data, baseVersion }) {
-      // Throws VaultLockedError (423) while locked: the device keeps its copy.
-      const blob = await sealLibrary(claims.userId, data ?? {});
+      // No vault yet: sealed under the server key, as before v0.5.0. With a
+      // vault, VaultLockedError (423) while locked: the device keeps its copy.
+      const blob =
+        !legacyOn || (await store.getVault(claims.userId))
+          ? await sealLibrary(claims.userId, data ?? {})
+          : legacyBox.seal(data ?? {});
       if (blob.length > MAX_LIBRARY) throw new Error('That library is too large to sync');
       const r = await store.putLibrary(claims.userId, blob, baseVersion);
       if (!r) {

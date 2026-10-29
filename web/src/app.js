@@ -1699,7 +1699,13 @@ function loadInBackground(pl = null) {
   Object.assign(HOME, { pl, error: null, retry: 0 });
   const run = (async () => {
     if (!pl) {
-      if (account.current()) await retrying(() => account.syncNow());
+      // A locked vault (423) pauses sync, it does not stop the app: the device
+      // keeps playing its own copy and Account says how to unlock.
+      if (account.current())
+        await retrying(() => account.syncNow()).catch((e) => {
+          if (e.status !== 423) throw e;
+          toast('Sync paused: unlock your key vault in Account');
+        });
       const cur = store.prefs.read('current', null);
       pl = S.playlists.find((p) => p.id === cur) || S.playlists[0];
       if (!pl) return;
@@ -1924,6 +1930,8 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
             'Your recovery key. Save it now (a password manager is ideal); it is shown only once:',
             recoveryKey,
           );
+          // Some browsers and TV apps suppress prompt(): keep it on screen too.
+          $('v-err').textContent = `Recovery key (shown once, save it now): ${recoveryKey}`;
         }
         vf.elements.pass.value = '';
         await account.syncNow().catch(() => {});
