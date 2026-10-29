@@ -104,6 +104,28 @@ export async function signOut() {
     call('/api/auth/logout', { refreshToken: session.refreshToken, accessToken: session.accessToken }).catch(() => {});
   save(null);
 }
+/* ------------------------------------------------------------------ CoinPay */
+// Sign in with CoinPay: the server does the OAuth; the callback leaves a
+// single-use code that becomes this browser's session here.
+
+/** Where "Sign in with CoinPay" goes; `next` is where to land afterwards. */
+export const coinpayStartUrl = (next = '/home') => `/api/v1/coinpay/oauth/start?next=${encodeURIComponent(next)}`;
+
+export async function finishCoinpay(code) {
+  const r = await call('/api/auth/coinpay', { code });
+  store.prefs.write('hadAccount', true);
+  save({ ...r.tokens, user: r.user });
+  await renewMediaCookie();
+  return r;
+}
+export const coinpayStatus = () => call('/api/v1/coinpay/link', undefined, { auth: true });
+/** Connect CoinPay to the signed-in account: off to CoinPay, back to /account. */
+export async function connectCoinpay() {
+  const { url } = await call('/api/v1/coinpay/link', {}, { auth: true });
+  location.assign(url);
+}
+export const disconnectCoinpay = () => call('/api/v1/coinpay/link', undefined, { auth: true, method: 'DELETE' });
+
 export const authorize = (query, decision) => call('/api/oauth/authorize', { query, decision }, { auth: true });
 
 /* ------------------------------------------------------------------ sync */

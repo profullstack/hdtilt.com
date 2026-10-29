@@ -23,6 +23,7 @@ import {
   validateProfile,
 } from '@profullstack/profile';
 import jwt from 'jsonwebtoken';
+import { createCoinpaySignIn, isCoinpayOnly, isPlaceholderEmail } from './coinpay.js';
 import {
   dataKeyFor,
   isSealedLibrary,
@@ -102,6 +103,13 @@ function postgresStore(adapter) {
         seal JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      // Sign in with CoinPay (2026-10-29): one row per CoinPay sub, one sub per
+      // account. The email is CoinPay's unverified contact address, never a login.
+      await adapter.query(`CREATE TABLE IF NOT EXISTS hdtilt_coinpay_identities (
+        sub TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL UNIQUE,
+        email TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     })());
   return {
     init,
@@ -164,6 +172,35 @@ function postgresStore(adapter) {
         JSON.stringify(seal),
       ]);
     },
+    async coinpayUser(sub) {
+      await init();
+      const { rows } = await adapter.query('SELECT user_id FROM hdtilt_coinpay_identities WHERE sub = $1', [sub]);
+      return rows[0]?.user_id || null;
+    },
+    async coinpayForUser(userId) {
+      await init();
+      const { rows } = await adapter.query('SELECT sub, created_at FROM hdtilt_coinpay_identities WHERE user_id = $1', [
+        userId,
+      ]);
+      return rows[0] ? { sub: rows[0].sub, createdAt: rows[0].created_at } : null;
+    },
+    /** 'linked' (new or already this account's), 'taken' (another account has it), 'conflict' (this account has another). */
+    async linkCoinpay(sub, userId, email) {
+      await init();
+      const { rows } = await adapter.query(
+        `INSERT INTO hdtilt_coinpay_identities (sub, user_id, email) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING RETURNING sub`,
+        [sub, userId, email || null],
+      );
+      if (rows.length) return 'linked';
+      const owner = await this.coinpayUser(sub);
+      if (owner === userId) return 'linked';
+      return owner ? 'taken' : 'conflict';
+    },
+    async unlinkCoinpay(userId) {
+      await init();
+      await adapter.query('DELETE FROM hdtilt_coinpay_identities WHERE user_id = $1', [userId]);
+    },
     async legacyLibraryCount() {
       await init();
       const { rows } = await adapter.query(
@@ -177,6 +214,7 @@ function postgresStore(adapter) {
 export function memoryStore(adapter) {
   const libs = new Map();
   const vaults = new Map();
+  const coinpay = new Map(); // sub -> { userId, email, createdAt }
   return {
     init: async () => {},
     async emailForUsername(username) {
@@ -208,6 +246,23 @@ export function memoryStore(adapter) {
     },
     async replaceVault(userId, seal) {
       vaults.set(userId, seal);
+    },
+    async coinpayUser(sub) {
+      return coinpay.get(sub)?.userId || null;
+    },
+    async coinpayForUser(userId) {
+      for (const [sub, v] of coinpay) if (v.userId === userId) return { sub, createdAt: v.createdAt };
+      return null;
+    },
+    async linkCoinpay(sub, userId, email) {
+      const owner = coinpay.get(sub)?.userId;
+      if (owner) return owner === userId ? 'linked' : 'taken';
+      if (await this.coinpayForUser(userId)) return 'conflict';
+      coinpay.set(sub, { userId, email: email || null, createdAt: new Date() });
+      return 'linked';
+    },
+    async unlinkCoinpay(userId) {
+      for (const [sub, v] of coinpay) if (v.userId === userId) coinpay.delete(sub);
     },
     async legacyLibraryCount() {
       const legacy = [...libs.values()].filter((l) => !String(l.blob).startsWith('v2:'));
@@ -340,9 +395,23 @@ export function createAccounts(opts = {}) {
 
   const publicUser = (u) => ({
     id: u.id,
-    email: u.email,
+    // A CoinPay-only account has a made-up address: it is nobody's email.
+    email: isPlaceholderEmail(u.email) ? null : u.email,
     username: u.profile?.username || null,
-    emailVerified: Boolean(u.emailVerified),
+    emailVerified: Boolean(u.emailVerified) && !isPlaceholderEmail(u.email),
+    coinpayOnly: isCoinpayOnly(u),
+  });
+
+  // Sign in with CoinPay (./coinpay.js): null when no client is configured.
+  const coinpay = createCoinpaySignIn({
+    env,
+    site,
+    adapter,
+    store,
+    auth,
+    publicUser,
+    fetch: opts.coinpayFetch,
+    base: env.COINPAY_BASE_URL || undefined,
   });
 
   async function whoFrom(authorization) {
@@ -366,6 +435,7 @@ export function createAccounts(opts = {}) {
     store,
     auth,
     oauth,
+    coinpay,
     /** Validate an /oauth/authorize query, then approve or deny it for a signed-in user. */
     async authorize(claims, query, decision) {
       await store.init();
@@ -473,7 +543,8 @@ export function createAccounts(opts = {}) {
     async login({ login, password }) {
       const id = String(login || '').trim();
       const email = id.includes('@') ? id.toLowerCase() : await store.emailForUsername(id);
-      if (!email) throw new Error('Wrong username or password');
+      // A CoinPay-only account has no password: only CoinPay signs into it.
+      if (!email || isPlaceholderEmail(email)) throw new Error('Wrong username or password');
       try {
         const r = await auth.login({ email, password });
         return { user: publicUser(r.user), tokens: r.tokens };
@@ -493,13 +564,14 @@ export function createAccounts(opts = {}) {
           .trim()
           .toLowerCase(),
       );
-      if (u && !u.emailVerified) {
+      if (u && !u.emailVerified && !isPlaceholderEmail(u.email)) {
         const token = await auth.tokenUtils.generateEmailVerificationToken(u.id);
         await auth._sendVerificationEmail(u.email, token);
       }
       return { ok: true };
     },
     async forgot(email) {
+      if (isPlaceholderEmail(email)) return { ok: true };
       try {
         await auth.resetPassword(
           String(email || '')
