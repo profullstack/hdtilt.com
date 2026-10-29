@@ -26,7 +26,8 @@ On hdtilt.com an account comes first: sign up (username, email, password), confi
 
 - **Username and password.** Sign in with either your username or your email. A TV has no mail client and no passkey, so a password is the way in on one.
 - **The email is confirmed before the account can sign in.** The link signs you straight in, and "Forgot your password?" sends a reset link.
-- **The CLI and TUI sign in with OAuth 2.1:** `hdtilt login` opens the browser (authorization code + PKCE, a loopback redirect), and `hdtilt login --manual` works over SSH by pasting a code. Tokens live in `~/.config/hdtilt/auth.json` (0600). `hdtilt sync` merges the account's playlists and favorites into the local config, and `hdtilt tui` syncs when it starts.
+- **Sign in with CoinPay** comes first on sign-in and sign-up (OAuth 2.1 code + PKCE S256 + state + nonce against coinpayportal.com). The account is bound to your CoinPay `sub`, never matched by email: a first CoinPay sign-in makes a new account, and an existing account connects CoinPay from its Account page while signed in. Disconnect is refused when CoinPay is the account's only way in. Server env: `COINPAY_OAUTH_CLIENT_ID`, `COINPAY_OAUTH_CLIENT_SECRET`.
+- **The CLI and TUI sign in with OAuth 2.1:** `hdtilt login` opens the browser (authorization code + PKCE, a loopback redirect), and `hdtilt login --manual` works over SSH by pasting a code; the sign-in page it opens offers Sign in with CoinPay too. Tokens live in `~/.config/hdtilt/auth.json` (0600). `hdtilt sync` merges the account's playlists and favorites into the local config, and `hdtilt tui` syncs when it starts.
 - Provider logins inside a synced library are encrypted at rest (AES-256-GCM).
 
 ## Every surface

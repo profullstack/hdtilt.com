@@ -1865,6 +1865,43 @@ const profileFields = (values = {}) =>
   );
 const profileValues = (form) => Object.fromEntries(PROFILE_FIELDS.map((n) => [n, form.elements[n].value.trim()]));
 
+/** Where a CoinPay sign-in lands: back on the CLI consent page if that sent us, else home. */
+const afterCoinpay = () => (location.pathname === '/oauth/authorize' ? location.pathname + location.search : '/home');
+
+const COINPAY_LINK_SAYS = {
+  linked: 'CoinPay connected: you can sign in with it now',
+  taken: 'That CoinPay account is already connected to another hdtilt account',
+  conflict: 'This account is already connected to a different CoinPay account',
+  denied: 'CoinPay was not connected',
+  failed: 'Could not connect CoinPay; try again',
+};
+
+/** The Connect / Disconnect CoinPay row on the account sheet. */
+function coinpayRow(sh) {
+  const box = sh.querySelector('#cp-row');
+  if (!box) return;
+  account
+    .coinpayStatus()
+    .then((s) => {
+      box.innerHTML = s.linked
+        ? `<p class="sub">Connected: you can sign in with CoinPay.${s.coinpayOnly ? ' It is how you sign in to this account, so it stays connected.' : ''}</p>${s.coinpayOnly ? '' : '<div class="actions"><button class="btn" id="cp-off">Disconnect CoinPay</button></div>'}`
+        : '<p class="sub">Sign in to hdtilt with your CoinPay account, on any screen.</p><div class="actions"><button class="btn" id="cp-on">Connect CoinPay</button></div>';
+      box
+        .querySelector('#cp-on')
+        ?.addEventListener('click', (e) =>
+          busy(e.target, 'Opening CoinPay…', () => account.connectCoinpay()).catch(
+            (x) => ($('cp-err').textContent = x.message),
+          ),
+        );
+      box.querySelector('#cp-off')?.addEventListener('click', (e) =>
+        busy(e.target, 'Disconnecting…', () => account.disconnectCoinpay())
+          .then(() => (toast('CoinPay disconnected'), coinpayRow(sh)))
+          .catch((x) => ($('cp-err').textContent = x.message)),
+      );
+    })
+    .catch(() => (box.innerHTML = ''));
+}
+
 /** Sign in, create an account, or (signed in) the account itself. `after` runs after sign-in. */
 function openAccount({ tab = 'in', after = null, note = '' } = {}) {
   const u = account.current();
@@ -1872,7 +1909,7 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
     const sh = sheet(
       'account',
       `<h1><img src="/icon.svg" alt="">${esc(u.username || 'Account')}</h1>
-      <p class="sub">${esc(u.email)}</p>
+      <p class="sub">${esc(u.email || 'Signed in with CoinPay')}</p>
       <p class="sub">Your playlists, favorites and recent channels follow you to every device you sign in on, including <code>hdtilt tui</code> after <code>hdtilt login</code>.</p>
       <div class="actions"><button class="btn primary" id="a-sync">Sync now</button><button class="btn" id="a-out">Sign out</button><button class="btn" id="a-close">Close</button></div>
       <div class="err" id="a-err"></div>
@@ -1884,9 +1921,11 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       <select class="field" name="ttl"><option value="1h">Stay unlocked 1 hour</option><option value="8h" selected>8 hours</option><option value="1d">1 day</option><option value="7d">7 days</option></select>
       <div class="actions"><button class="btn primary" type="submit" id="v-go">Unlock</button><button class="btn" type="button" id="v-lock">Lock now</button></div>
       <div class="err" id="v-err"></div></form>
+      ${api.serverInfo.coinpay ? '<h2>CoinPay</h2><div id="cp-row" class="sub">Checking…</div><div class="err" id="cp-err"></div>' : ''}
       <form id="pf">${profileFields()}<div class="err" id="p-err"></div>
       <div class="actions"><button class="btn" type="submit">Save profile</button></div></form>`,
     );
+    coinpayRow(sh);
     const pf = sh.querySelector('#pf');
     account
       .getProfile()
@@ -1960,6 +1999,11 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
     'account',
     `<h1><img src="/icon.svg" alt="">${tab === 'up' ? 'Create account' : 'Sign in'}</h1>
     <p class="sub">${note || (signInFirst() ? (tab === 'up' ? 'Create a free account to start watching. Your playlists and favorites will follow you to every screen.' : 'Sign in to watch. Your playlists and favorites come with you.') : 'An account keeps your playlists and favorites on every screen you watch on.')}</p>
+    ${
+      api.serverInfo.coinpay
+        ? `<a class="btn coinpay" id="a-coinpay" href="${esc(account.coinpayStartUrl(afterCoinpay()))}">${tab === 'up' ? 'Sign up with CoinPay' : 'Sign in with CoinPay'}</a><div class="or">or with ${tab === 'up' ? 'an email and password' : 'your hdtilt password'}</div>`
+        : ''
+    }
     <div class="tabs"><button class="${tab === 'in' ? 'on' : ''}" data-tab="in">Sign in</button><button class="${tab === 'up' ? 'on' : ''}" data-tab="up">Create account</button></div>
     <form id="af">
       ${
@@ -2161,6 +2205,36 @@ async function handleRoute() {
     await openConsent(q);
     return true;
   }
+  // Back from Sign in with CoinPay: a single-use code becomes this browser's session.
+  if (pathname === '/oauth/coinpay') {
+    home();
+    if (!q.code) {
+      openAccount({
+        note: esc(
+          {
+            state: 'That CoinPay sign-in had expired or was started in another browser. Try again.',
+            denied: 'CoinPay sign-in was cancelled.',
+            unavailable: 'Sign in with CoinPay is not set up on this server.',
+          }[q.error] || 'CoinPay sign-in did not work. Try again, or use your password.',
+        ),
+      });
+      return true;
+    }
+    try {
+      const r = await account.finishCoinpay(q.code);
+      toast(`Signed in as ${r.user.username || r.user.email}`);
+      if (!S.pl) loadInBackground();
+      else account.syncNow().catch(() => {});
+      const next = r.next?.startsWith('/') && !r.next.startsWith('//') ? r.next : '/home';
+      history.replaceState({ depth: 0 }, '', next);
+      if (next.startsWith('/oauth/authorize'))
+        await openConsent(Object.fromEntries(new URL(next, location.origin).searchParams));
+      else render(next);
+    } catch (x) {
+      openAccount({ note: esc(x.message) });
+    }
+    return true;
+  }
   if (pathname === '/oauth/cli') {
     home();
     sheet(
@@ -2327,10 +2401,16 @@ function render(full) {
       return openGuide();
     case 'settings':
       return arg === 'add' ? openSetup(!S.playlists.length) : openSettings();
-    case 'account':
+    case 'account': {
+      const said = COINPAY_LINK_SAYS[u.searchParams.get('coinpay')];
+      if (said) {
+        toast(said);
+        history.replaceState(history.state, '', '/account');
+      }
       if (arg === 'signup') return openAccount({ tab: 'up' });
       if (arg === 'forgot') return openForgot();
       return openAccount();
+    }
     default:
       return go(S.pl ? watchPath() : '/', { replace: true });
   }

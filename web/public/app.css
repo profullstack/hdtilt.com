@@ -1496,3 +1496,30 @@ body.nav-on #sheet[data-ad]:not([hidden]) ~ .ad-dock {
     max-height: 60vh;
   }
 }
+/* Sign in with CoinPay: the first option on sign-in and sign-up. */
+.btn.coinpay {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
+  text-align: center;
+  text-decoration: none;
+  font-weight: 700;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-sizing: border-box;
+}
+.or {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--dim);
+  font-size: 0.8rem;
+  margin: 1rem 0 0.2rem;
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}

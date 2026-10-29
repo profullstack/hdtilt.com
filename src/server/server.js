@@ -19,6 +19,7 @@ import { b64urlDecode, proxyPath } from '../core/util.js';
 import { browseVod } from '../core/vod.js';
 import { VERSION } from '../version.js';
 import { createAccounts } from './accounts.js';
+import { COINPAY_COOKIE } from './coinpay.js';
 import { crawlAnswer, createCrawlGate } from './crawl.js';
 import { withFooter } from './footer.js';
 import { handleRpc } from './mcp.js';
@@ -231,10 +232,16 @@ export function createApp(opts = {}) {
         version: VERSION,
         public: isPublic,
         accounts: Boolean(accounts),
+        coinpay: Boolean(accounts?.coinpay),
         hls: Boolean(remux),
         vod: true,
         subtitles: Boolean(await subtitles()),
       });
+
+    if (path.startsWith('/api/v1/coinpay/')) {
+      if (!accounts) return send(res, 404, { error: 'accounts are not enabled on this server' });
+      return coinpayRoute(req, res, path);
+    }
 
     if (
       path.startsWith('/api/auth/') ||
@@ -387,6 +394,46 @@ export function createApp(opts = {}) {
     }
   }
 
+  /** Sign in with CoinPay (./coinpay.js): start, callback, and Connect / Disconnect. */
+  const coinpayCookie = (value, maxAge, req) =>
+    `${COINPAY_COOKIE}=${encodeURIComponent(value)}; Path=/api/v1/coinpay/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`;
+
+  async function coinpayRoute(req, res, path) {
+    const cp = accounts.coinpay;
+    const url = new URL(req.url, 'http://x');
+    const redirect = (to, cookie) => send(res, 302, '', { location: to, ...(cookie ? { 'set-cookie': cookie } : {}) });
+    if (path === '/api/v1/coinpay/oauth/start' && req.method === 'GET') {
+      if (!cp) return redirect('/oauth/coinpay?error=unavailable');
+      if (limited(clientIp(req))) return send(res, 429, 'Too many tries; wait a minute');
+      const s = cp.start({ mode: 'login', next: url.searchParams.get('next') });
+      return redirect(s.url, coinpayCookie(s.cookie, s.maxAge, req));
+    }
+    if (path === '/api/v1/coinpay/oauth/callback' && req.method === 'GET') {
+      if (!cp) return redirect('/oauth/coinpay?error=unavailable');
+      const r = await cp.callback(Object.fromEntries(url.searchParams), cookieOf(req, COINPAY_COOKIE));
+      return redirect(r.redirect, coinpayCookie('', 0, req));
+    }
+    if (path === '/api/v1/coinpay/link') {
+      if (!cp) return send(res, 404, { error: 'Sign in with CoinPay is not set up here' });
+      const claims = await accounts.whoFrom(req.headers.authorization);
+      if (!claims) return send(res, 401, { error: 'Sign in first' });
+      // Only a browser session links or unlinks, never a CLI's OAuth token.
+      if (claims.via === 'oauth') return send(res, 403, { error: 'Sign in on the website to do this' });
+      try {
+        if (req.method === 'GET') return send(res, 200, await cp.status(claims.userId));
+        if (req.method === 'POST') {
+          const s = cp.start({ mode: 'link', userId: claims.userId });
+          return send(res, 200, { url: s.url }, { 'set-cookie': coinpayCookie(s.cookie, s.maxAge, req) });
+        }
+        if (req.method === 'DELETE') return send(res, 200, await cp.unlink(claims.userId));
+      } catch (e) {
+        return send(res, e.status || 400, { error: e.message });
+      }
+      return send(res, 405, { error: 'GET, POST or DELETE' });
+    }
+    return send(res, 404, { error: 'no such endpoint' });
+  }
+
   async function account(req, res, path) {
     const fail = (e, status = 400) =>
       // A locked key vault is 423 (VaultLockedError carries it); sync waits.
@@ -425,6 +472,11 @@ export function createApp(opts = {}) {
             return send(res, 200, await accounts.refresh(b.refreshToken));
           case '/api/auth/logout':
             return send(res, 200, await accounts.logout(b), { 'set-cookie': mediaCookie('', 0, req) });
+          case '/api/auth/coinpay': {
+            // The single-use handoff the CoinPay callback left: the session, once.
+            if (!accounts.coinpay) return send(res, 404, { error: 'Sign in with CoinPay is not set up here' });
+            return send(res, 200, await accounts.coinpay.exchange(b.code));
+          }
           case '/api/auth/media': {
             // Called by the app after any sign-in and at start: the cookie that
             // lets <video> and <img> through the proxy on hdtilt.com.
