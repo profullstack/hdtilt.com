@@ -12,6 +12,7 @@
         "@profullstack/player": "^0.16.0",
         "@profullstack/profile": "0.1.6",
         "@profullstack/sealed-secrets": "0.1.0",
+        "@profullstack/stream-providers": "^0.1.1",
         "@profullstack/x402-gateway": "^0.16.1",
         "jsonwebtoken": "^9.0.3",
         "pg": "^8.23.1",
@@ -99,6 +100,8 @@
     "@profullstack/profile": ["@profullstack/profile@0.1.6", "", { "peerDependencies": { "@libsql/client": ">=0.6.0", "postgres": "^3.4.0", "react": ">=18" }, "optionalPeers": ["@libsql/client", "postgres", "react"], "bin": { "profile": "src/cli.js" } }, "sha512-xkn0P3ANz151QJdlBwcBXkHk813qW9qAmuTZKcuvpEZYkyHDC9J9KfvpVSRepfjECzz4ONGHWO5Zwc4BHpfK8g=="],
 
     "@profullstack/sealed-secrets": ["@profullstack/sealed-secrets@0.1.0", "", {}, "sha512-6LRa+yUT7PQ5tZNoYEnf3VVxsyw/dqHqAtYpk/aS/bntxf3mQH+2MwNjQoBd7fCqdN97TvZup8qhrpfUcZlfng=="],
+
+    "@profullstack/stream-providers": ["@profullstack/stream-providers@0.1.1", "", { "peerDependencies": { "puppeteer-core": ">=22" }, "optionalPeers": ["puppeteer-core"] }, "sha512-XUE7Tz7NMqpU1X1U+d7omdIXJgfmMXaDRyYBRgYXBf8Pszevx79447IA6/NDfLx+5ZSnMuNXD4ECQysfTyIyFA=="],
 
     "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.16.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-4aRbH2t5J7vJo9n6SqODNrxD0NBI7GsCo3WjTYuAfIzuPjElHB9TwtpvdpXwOneEJGpQ0JJpHght4M6F39SJng=="],
 
