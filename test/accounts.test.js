@@ -184,10 +184,10 @@ describe('library', () => {
   it('needs a session', async () => {
     expect((await fetch(at('/api/library'))).status).toBe(401);
   });
-  it('is sealed with the account key vault: no vault, no write', async () => {
+  it('with no vault yet, syncs under the server key as before v0.5.0', async () => {
     const r = await put(session.accessToken, { data: { playlists: [] }, baseVersion: 0 });
-    expect(r.status).toBe(423);
-    expect((await r.json()).code).toBe('vault_locked');
+    expect(r.status).toBe(200);
+    expect((await (await get(session.accessToken)).json()).data).toEqual({ playlists: [] });
   });
   it('creates and unlocks a vault the way the browser does', async () => {
     const me = await (
@@ -205,17 +205,19 @@ describe('library', () => {
     vaultDek = made.dek;
   });
   it('round-trips, and refuses a write based on an old version', async () => {
-    expect(await (await get(session.accessToken)).json()).toEqual({ data: null, version: 0 });
+    // The vault's first unlock re-sealed the no-vault write from above.
+    const before = await (await get(session.accessToken)).json();
+    expect(before.data).toEqual({ playlists: [] });
     const data = {
       playlists: [
         { id: 'p1', name: 'Home', source: { type: 'xtream', server: 'http://h', username: 'u', password: 'secret' } },
       ],
       favorites: { p1: ['a', 'b'] },
     };
-    const w = await (await put(session.accessToken, { data, baseVersion: 0 })).json();
-    expect(w.version).toBe(1);
+    const w = await (await put(session.accessToken, { data, baseVersion: before.version })).json();
+    expect(w.version).toBe(before.version + 1);
     expect((await (await get(session.accessToken)).json()).data).toEqual(data);
-    const stale = await put(session.accessToken, { data: {}, baseVersion: 0 });
+    const stale = await put(session.accessToken, { data: {}, baseVersion: before.version });
     expect(stale.status).toBe(409);
   });
   it('locks: reads answer 423 until it is unlocked again', async () => {

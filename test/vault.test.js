@@ -60,7 +60,31 @@ describe('the old server key', () => {
     return { accounts, store, made };
   }
 
-  it('is never read at runtime, even with the env key present', async () => {
+  async function noVault(extraEnv = {}) {
+    resetUnlockStoreForTests();
+    const adapter = new MemoryAdapter();
+    const store = memoryStore(adapter);
+    await store.putLibrary('u8', legacy, null);
+    const accounts = createAccounts({ adapter, store, env: { ...env, ...extraEnv }, sendEmail: async () => {} });
+    return { accounts, store };
+  }
+
+  it('with no vault yet, the library reads and syncs as before v0.5.0', async () => {
+    const { accounts, store } = await noVault();
+    const got = await accounts.getLibrary({ userId: 'u8' });
+    expect(got.data.playlists[0].source.password).toBe('pw');
+    await accounts.putLibrary({ userId: 'u8' }, { data: { playlists: [] }, baseVersion: got.version });
+    const row = await store.getLibrary('u8');
+    expect(isSealedLibrary(row.blob)).toBe(false);
+    expect((await accounts.getLibrary({ userId: 'u8' })).data.playlists).toEqual([]);
+  });
+
+  it('with no vault and the cutoff on, it is a 423, not the old key', async () => {
+    const { accounts } = await noVault({ LEGACY_KEY_MIGRATION: 'off' });
+    await expect(accounts.getLibrary({ userId: 'u8' })).rejects.toBeInstanceOf(VaultLockedError);
+  });
+
+  it('once the vault exists it is never read at runtime, even with the env key present', async () => {
     const { accounts } = await setup();
     await expect(accounts.getLibrary({ userId: 'u9' })).rejects.toBeInstanceOf(VaultLockedError);
   });
