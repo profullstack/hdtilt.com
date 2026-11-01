@@ -26,6 +26,7 @@ import {
   SIGN_IN_SCOPES,
   sameState,
 } from '@profullstack/coinpay-onboard/oauth';
+import { saveOpenProfileContact } from '@profullstack/profile';
 
 export const COINPAY_COOKIE = 'hdtilt_coinpay';
 export const PLACEHOLDER_DOMAIN = 'coinpay.hdtilt.invalid';
@@ -71,7 +72,7 @@ export function openPending(value, key, now = Date.now()) {
  *   auth: object, publicUser: (u: object) => object, fetch?: typeof fetch, base?: string }} deps
  * @returns {null | object} null when no CoinPay client is configured
  */
-export function createCoinpaySignIn({ env, site, adapter, store, auth, publicUser, fetch: doFetch, base }) {
+export function createCoinpaySignIn({ env, site, adapter, store, auth, publicUser, profileStore, fetch: doFetch, base }) {
   const clientId = env.COINPAY_OAUTH_CLIENT_ID;
   const clientSecret = env.COINPAY_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
@@ -137,7 +138,12 @@ export function createCoinpaySignIn({ env, site, adapter, store, auth, publicUse
         base,
         fetch: doFetch,
       });
-      who = { sub: r.sub, email: r.email, name: r.name };
+      who = {
+        sub: r.sub,
+        email: r.email,
+        name: r.name,
+        openprofileUrl: typeof r.userinfo?.openprofile_url === 'string' ? r.userinfo.openprofile_url : null,
+      };
     } catch (e) {
       console.error(`hdtilt: CoinPay sign-in failed: ${e.message}`);
       return { redirect: `${failed}failed` };
@@ -145,6 +151,13 @@ export function createCoinpaySignIn({ env, site, adapter, store, auth, publicUse
     if (pending.mode === 'link') {
       if (!(await adapter.getUserById(pending.userId))) return { redirect: '/account?coinpay=failed' };
       const outcome = await store.linkCoinpay(who.sub, pending.userId, who.email);
+      if (outcome === 'linked' && who.openprofileUrl && profileStore) {
+        try {
+          await saveOpenProfileContact(await profileStore(), String(pending.userId), who.openprofileUrl);
+        } catch (e) {
+          console.warn(`hdtilt: OpenProfile import skipped: ${e.message}`);
+        }
+      }
       return { redirect: `/account?coinpay=${outcome}` };
     }
     const userId = await accountForSub(who);

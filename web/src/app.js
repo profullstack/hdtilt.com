@@ -1858,12 +1858,52 @@ const busy = async (btn, label, fn) => {
 
 /** The shared profile fields (@profullstack/profile); the form already has its own email box. */
 const PROFILE_FIELDS = ['first_name', 'last_name', 'company_domain', 'job_title', 'linkedin_url'];
-const profileFields = (values = {}) =>
-  renderProfileFields({ fields: PROFILE_FIELDS, idPrefix: 'a-', values }).replaceAll(
+const profileFields = (values = {}, importOpenProfile = false) =>
+  renderProfileFields({ fields: PROFILE_FIELDS, idPrefix: 'a-', values, importOpenProfile }).replaceAll(
     '<input ',
     '<input class="field" ',
   );
 const profileValues = (form) => Object.fromEntries(PROFILE_FIELDS.map((n) => [n, form.elements[n].value.trim()]));
+
+function bindOpenProfileImporter(form) {
+  const box = form?.querySelector('[data-pfs-openprofile-import]');
+  if (!box || box.dataset.pfsBound) return;
+  const input = box.querySelector('[data-pfs-openprofile-url]');
+  const button = box.querySelector('[data-pfs-openprofile-button]');
+  const status = box.querySelector('[data-pfs-openprofile-status]');
+  if (!input || !button || !status) return;
+  box.dataset.pfsBound = '1';
+  input.addEventListener('input', () => { button.disabled = !input.value.trim(); });
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    button.textContent = 'Fetching…';
+    status.textContent = '';
+    status.setAttribute('role', 'status');
+    try {
+      const profileUrl = new URL(input.value.trim());
+      if (profileUrl.protocol !== 'https:') throw new Error('Use an HTTPS OpenProfile URL.');
+      const body = await account.getOpenProfile(profileUrl.href);
+      let count = 0;
+      for (const [name, value] of Object.entries(body.profile || {})) {
+        if (typeof value !== 'string' || !value.trim()) continue;
+        const field = form.elements.namedItem(name);
+        if (!(field instanceof HTMLInputElement)) continue;
+        field.value = value;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+        count++;
+      }
+      if (!count) throw new Error('No contact details were found in that OpenProfile.md.');
+      status.textContent = 'Fetched. Review or edit the fields before saving.';
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Could not fetch that OpenProfile.md.';
+      status.setAttribute('role', 'alert');
+    } finally {
+      button.textContent = 'Fetch and prefill';
+      button.disabled = !input.value.trim();
+    }
+  });
+}
 
 /** Where a CoinPay sign-in lands: back on the CLI consent page if that sent us, else home. */
 const afterCoinpay = () => (location.pathname === '/oauth/authorize' ? location.pathname + location.search : '/home');
@@ -1922,11 +1962,12 @@ function openAccount({ tab = 'in', after = null, note = '' } = {}) {
       <div class="actions"><button class="btn primary" type="submit" id="v-go">Unlock</button><button class="btn" type="button" id="v-lock">Lock now</button></div>
       <div class="err" id="v-err"></div></form>
       ${api.serverInfo.coinpay ? '<h2>CoinPay</h2><div id="cp-row" class="sub">Checking…</div><div class="err" id="cp-err"></div>' : ''}
-      <form id="pf">${profileFields()}<div class="err" id="p-err"></div>
+      <form id="pf">${profileFields({}, true)}<div class="err" id="p-err"></div>
       <div class="actions"><button class="btn" type="submit">Save profile</button></div></form>`,
     );
     coinpayRow(sh);
     const pf = sh.querySelector('#pf');
+    bindOpenProfileImporter(pf);
     account
       .getProfile()
       .then(({ profile }) => {
