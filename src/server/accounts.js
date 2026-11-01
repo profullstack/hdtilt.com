@@ -18,6 +18,7 @@ import { createEmailer } from '@profullstack/emailer';
 import {
   createProfileHandlers,
   createProfileStore,
+  saveOpenProfileContact,
   saveSignupProfile,
   schemaSql,
   validateProfile,
@@ -410,6 +411,7 @@ export function createAccounts(opts = {}) {
     store,
     auth,
     publicUser,
+    profileStore,
     fetch: opts.coinpayFetch,
     base: env.COINPAY_BASE_URL || undefined,
   });

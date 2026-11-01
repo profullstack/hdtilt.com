@@ -88,6 +88,8 @@ export const register = (username, email, password, profile = {}) =>
   call('/api/auth/register', { ...profile, username, email, password });
 /** The shared profile (name, company, title, LinkedIn) for the signed-in account. */
 export const getProfile = () => call('/api/v1/me/profile', undefined, { auth: true });
+export const getOpenProfile = (url) =>
+  call(`/api/v1/me/profile?openprofile=${encodeURIComponent(url)}`, undefined, { auth: true });
 export const saveProfile = (fields) => call('/api/v1/me/profile', fields, { auth: true, method: 'PATCH' });
 export const resend = (email) => call('/api/auth/resend', { email });
 export const forgot = (email) => call('/api/auth/forgot', { email });
