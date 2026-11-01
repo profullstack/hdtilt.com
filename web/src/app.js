@@ -1873,7 +1873,9 @@ function bindOpenProfileImporter(form) {
   const status = box.querySelector('[data-pfs-openprofile-status]');
   if (!input || !button || !status) return;
   box.dataset.pfsBound = '1';
-  input.addEventListener('input', () => { button.disabled = !input.value.trim(); });
+  input.addEventListener('input', () => {
+    button.disabled = !input.value.trim();
+  });
   button.addEventListener('click', async () => {
     button.disabled = true;
     button.textContent = 'Fetching…';

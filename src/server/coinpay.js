@@ -72,7 +72,17 @@ export function openPending(value, key, now = Date.now()) {
  *   auth: object, publicUser: (u: object) => object, fetch?: typeof fetch, base?: string }} deps
  * @returns {null | object} null when no CoinPay client is configured
  */
-export function createCoinpaySignIn({ env, site, adapter, store, auth, publicUser, profileStore, fetch: doFetch, base }) {
+export function createCoinpaySignIn({
+  env,
+  site,
+  adapter,
+  store,
+  auth,
+  publicUser,
+  profileStore,
+  fetch: doFetch,
+  base,
+}) {
   const clientId = env.COINPAY_OAUTH_CLIENT_ID;
   const clientSecret = env.COINPAY_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
