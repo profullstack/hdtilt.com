@@ -60,7 +60,7 @@
     "@profullstack/emailer": "^1.0.3",
     "@profullstack/footer": "latest",
     "@profullstack/hqtui": "^0.11.0",
-    "@profullstack/player": "^0.16.0",
+    "@profullstack/player": "^0.17.0",
     "@profullstack/profile": "0.1.8",
     "@profullstack/sealed-secrets": "0.1.0",
     "@profullstack/stream-providers": "^0.1.1",
