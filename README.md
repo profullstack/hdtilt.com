@@ -114,6 +114,8 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 | GET       | `/api/me`                                                                          | the signed-in account (`Authorization: Bearer`, a session or an OAuth token)                                                                         |
 | GET / PUT | `/api/library`                                                                     | the synced library; PUT `{ data, baseVersion }`, 409 if another device wrote first                                                                   |
 | GET       | `/.well-known/oauth-authorization-server`                                          | OAuth 2.1 metadata; `/oauth/token`, `/oauth/revoke`; client `hdtilt-cli`                                                                             |
+| POST      | `/oauth/device_authorization`                                                      | TV sign-in (client `hdtilt-tv`): `{ device_code, user_code, verification_uri }`; approve at `/link`, poll `/oauth/token` with the device_code grant  |
+| POST      | `/api/tv/load` `channels` `vod`                                                    | the Roku app's paged view of a playlist: groups, then pages of channels or titles, each with `play: { url, format, fallback? }`                      |
 | POST      | `/api/subtitles`                                                                   | `{ title?, year?, tmdbId?, season?, episode?, languages?, url? }` → `{ items: [{ fileId, language, release, downloads, hashMatch, … }], moviehash }` |
 | GET       | `/subs/<fileId>.vtt?shift=<s>`                                                     | one subtitle as WebVTT, cues moved by `shift` seconds                                                                                                |
 | GET       | `/hls/<base64url>/index.m3u8`                                                      | an MPEG-TS stream repackaged as HLS (for browsers without MSE)                                                                                       |
@@ -121,6 +123,18 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 | POST      | `/mcp`                                                                             | MCP JSON-RPC                                                                                                                                         |
 
 `source` is `{ "type": "m3u", "url": "…" }` or `{ "type": "xtream", "server": "…", "username": "…", "password": "…" }`, plus an optional `"epg"`.
+
+## Roku
+
+`roku/` is a native SceneGraph app for hdtilt.com. On first launch it shows a code; open
+**hdtilt.com/link** on a phone, sign in and enter it. It then opens the account's playlists:
+Favorites, All channels, Search, Movies, Shows and every group, with ▲▼ to change channel.
+Streams a Roku decodes play straight from the provider; transport streams (and anything that
+fails) go through hdtilt's HLS remux.
+
+Build the sideload zip with `npx -p brighterscript bsc --project roku/bsconfig.json`
+(`dist-roku/hdtilt-roku.zip`, also attached to every release), then upload it at
+`http://<roku-ip>` with the device in developer mode.
 
 ## Privacy and the proxy
 

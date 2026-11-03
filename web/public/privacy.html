@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Privacy — hdtilt</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  body { margin: 0; background: #0b0f14; color: #e6edf3; font: 17px/1.6 system-ui, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { color: #38bdf8; }
+  h2 { margin-top: 2rem; }
+  a { color: #38bdf8; }
+  code { color: #8b98a8; }
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy</h1>
+<p>hdtilt is an open-source IPTV player run by Profullstack, Inc. This covers hdtilt.com and the hdtilt apps for Roku, Fire TV, desktop and the terminal. Last updated 3 November 2026.</p>
+
+<h2>What we keep</h2>
+<ul>
+  <li><strong>Your account:</strong> username, email address, name and any profile fields you fill in, and a hash of your password (or your CoinPay account id if you sign in with CoinPay).</li>
+  <li><strong>Your library:</strong> the playlists you add (which can include your provider login), your favorites and recent channels, so they follow you to every device. The library is sealed with a key derived from a passphrase only you know; our server holds that key in memory only while your vault is unlocked.</li>
+  <li><strong>Sign-in records:</strong> tokens for the devices you connect (for example a TV you linked at hdtilt.com/link). Sign out or revoke a device to delete them.</li>
+</ul>
+
+<h2>What passes through</h2>
+<ul>
+  <li><strong>Streams:</strong> some streams play through our proxy or are converted to HLS on our server so your browser or TV can play them. They pass through and are not stored or logged beyond ordinary server logs (IP address, time, request), kept for security and abuse prevention.</li>
+  <li><strong>Subtitles:</strong> when you ask for subtitles, the title (and a file fingerprint) is sent to OpenSubtitles.</li>
+  <li><strong>Email:</strong> confirmation and password-reset emails are sent through our email provider.</li>
+  <li><strong>Visit statistics:</strong> the website counts page views with a cookieless stats script (crawlproof.com).</li>
+</ul>
+
+<h2>What we do not do</h2>
+<p>We do not sell or share your data, show ads, or provide any channels or content. hdtilt plays the playlist you add; you are responsible for having the right to watch it.</p>
+
+<h2>Your choices</h2>
+<p>You can export or delete your playlists in the app, sign out any device, and ask us to delete your account by emailing <a href="mailto:hello@profullstack.com">hello@profullstack.com</a>. The source code is at <a href="https://github.com/profullstack/hdtilt.com">github.com/profullstack/hdtilt.com</a>.</p>
+</main>
+</body>
+</html>

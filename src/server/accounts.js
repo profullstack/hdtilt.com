@@ -25,6 +25,7 @@ import {
 } from '@profullstack/profile';
 import jwt from 'jsonwebtoken';
 import { createCoinpaySignIn, isCoinpayOnly, isPlaceholderEmail } from './coinpay.js';
+import { createDeviceFlow, TV_CLIENT_ID } from './tv.js';
 import {
   dataKeyFor,
   isSealedLibrary,
@@ -391,6 +392,8 @@ export function createAccounts(opts = {}) {
     tokenPrefix: OAUTH_PREFIX,
     clients: {
       [CLI_CLIENT_ID]: { name: 'hdtilt CLI and TUI', redirectUris: ['http://127.0.0.1/callback', `${site}/oauth/cli`] },
+      // The Roku app (roku/): signs in with a code shown on the TV (./tv.js).
+      [TV_CLIENT_ID]: { name: 'hdtilt on your TV', redirectUris: [`${site}/oauth/device`] },
     },
   });
 
@@ -433,10 +436,25 @@ export function createAccounts(opts = {}) {
     }
   }
 
+  const deviceFlow = createDeviceFlow({ oauth, site });
+
   return {
     store,
     auth,
     oauth,
+    /** Sign-in with a code shown on a TV (./tv.js). */
+    device: {
+      start: (body) => deviceFlow.start(body),
+      lookup: (code) => deviceFlow.lookup(code),
+      async decide(claims, code, decision) {
+        await store.init();
+        return deviceFlow.decide(claims.userId, code, decision);
+      },
+      async poll(body) {
+        await store.init();
+        return deviceFlow.poll(body);
+      },
+    },
     coinpay,
     /** Validate an /oauth/authorize query, then approve or deny it for a signed-in user. */
     async authorize(claims, query, decision) {
