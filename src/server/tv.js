@@ -261,7 +261,9 @@ export function createTvData({ fetch, remux = true, ttlMs = 10 * 60_000, max = 4
       const p = page(list, offset, limit);
       return { ...p, items: p.items.map((c) => slimChannel(c, d.ctx)) };
     },
-    async vod(_userId, { source, kind, category, q, seriesId, offset, limit }) {
+    // BrightScript lowercases the keys of an object literal, so a Roku sends `seriesid`.
+    async vod(_userId, { source, kind, category, q, seriesId: sid, seriesid, offset, limit }) {
+      const seriesId = sid ?? seriesid;
       if (!source?.type) throw Object.assign(new Error('source required'), { status: 400 });
       const r = await browseVod(source, { kind, category, q, seriesId }, { fetch });
       const ctx = { kind: 'vod', remux };

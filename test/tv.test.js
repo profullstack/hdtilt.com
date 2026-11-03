@@ -187,6 +187,18 @@ describe('TV data', () => {
   });
 });
 
+describe('Roku request shapes', () => {
+  it('reads seriesid as BrightScript sends it', async () => {
+    const { createTvData } = await import('../src/server/tv.js');
+    const seen = [];
+    const d = createTvData({ fetch: async (u) => (seen.push(String(u)), new Response('null')) });
+    await d
+      .vod('u', { source: { type: 'xtream', server: 'http://p', username: 'a', password: 'b' }, seriesid: 42 })
+      .catch(() => {});
+    expect(seen.some((u) => u.includes('get_series_info') && u.includes('series_id=42'))).toBe(true);
+  });
+});
+
 describe('Roku play URLs', () => {
   it('plays what a Roku decodes direct, and remuxes transport streams', () => {
     expect(rokuPlay('http://p/x.m3u8')).toEqual({ url: 'http://p/x.m3u8', format: 'hls' });
