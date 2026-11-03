@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#0b0f14"/>
+  <image x="100" y="200" width="320" height="320" xlink:href="logo-512.png"/>
+  <text x="470" y="385" font-family="DejaVu Sans" font-weight="bold" font-size="120" fill="#e6edf3">hdtilt</text>
+  <text x="474" y="460" font-family="DejaVu Sans" font-size="44" fill="#38bdf8">your IPTV · TV guide · movies</text>
+</svg>

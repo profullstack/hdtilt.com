@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="hd_bg">#0b0f14</color>
+    <color name="hd_fg">#e6edf3</color>
+    <color name="hd_accent">#38bdf8</color>
+
+    <style name="HdTheme" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/hd_bg</item>
+        <item name="android:colorAccent">@color/hd_accent</item>
+        <item name="android:colorPrimary">@color/hd_bg</item>
+        <item name="android:colorPrimaryDark">@color/hd_bg</item>
+        <item name="android:textColor">@color/hd_fg</item>
+    </style>
+
+    <style name="HdDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/hd_accent</item>
+        <item name="android:background">@color/hd_bg</item>
+        <item name="android:textColor">@color/hd_fg</item>
+    </style>
+</resources>

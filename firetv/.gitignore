@@ -1,0 +1,6 @@
+.gradle/
+app/build/
+build/
+dist/
+local.properties
+store/src/logo-512.png
