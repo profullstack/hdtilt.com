@@ -24,6 +24,7 @@ import { crawlAnswer, createCrawlGate } from './crawl.js';
 import { withFooter } from './footer.js';
 import { handleRpc } from './mcp.js';
 import { createRemuxer, hasFfmpeg } from './remux.js';
+import { createTvData, DEVICE_GRANT } from './tv.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const WEB_DIR = process.env.HDTILT_WEB_DIR || join(here, '../../web/dist');
@@ -81,6 +82,8 @@ export function createApp(opts = {}) {
         });
   const accounts = opts.accounts === undefined ? createAccounts() : opts.accounts;
   const gated = isPublic && Boolean(accounts);
+  // Paged playlists for the Roku app (./tv.js).
+  const tvData = createTvData({ fetch: guardedFetch, remux: remux !== null });
 
   // Subtitles (core/subtitles.js): the key comes from the environment, or on a
   // local install from `hdtilt subs --key` in the config. Read once, lazily.
@@ -251,10 +254,35 @@ export function createApp(opts = {}) {
       path === '/api/vault/unlock' ||
       path === '/api/vault/lock' ||
       path === '/api/oauth/authorize' ||
+      path === '/api/oauth/device' ||
       path === '/api/v1/me/profile'
     ) {
       if (!accounts) return send(res, 404, { error: 'accounts are not enabled on this server' });
       return account(req, res, path);
+    }
+
+    // The Roku app: groups and pages of a playlist, kept here a few minutes (./tv.js).
+    const tvm = /^\/api\/tv\/(load|channels|vod)$/.exec(path);
+    if (tvm) {
+      if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
+      let userId = 'local';
+      if (accounts && (gated || req.headers.authorization)) {
+        const claims = await accounts.whoFrom(req.headers.authorization);
+        if (!claims) return send(res, 401, { error: 'Sign in first', code: 'signin' });
+        userId = claims.userId;
+      }
+      const b = await readJson(req);
+      if (b.source?.type === 'saved' && !isPublic) b.source = (await readConfig()).playlists[b.source.name] || b.source;
+      let out;
+      try {
+        out = await tvData[tvm[1]](userId, b);
+      } catch (e) {
+        return send(res, e.status || 502, { error: String(e.message || e) });
+      }
+      // The stream proxy wants the media cookie; a Roku sends it as a header.
+      if (tvm[1] === 'load' && accounts && userId !== 'local')
+        out.media = `hdtilt_media=${encodeURIComponent(accounts.mediaToken(userId, 30 * 86400_000))}`;
+      return send(res, 200, out);
     }
 
     // hdtilt.com needs an account before it loads anything; a local install has none.
@@ -388,6 +416,8 @@ export function createApp(opts = {}) {
         await accounts.revoke(body.token);
         return send(res, 200, {});
       }
+      if (path === '/oauth/device_authorization') return send(res, 200, accounts.device.start(body));
+      if (body.grant_type === DEVICE_GRANT) return send(res, 200, await accounts.device.poll(body));
       return send(res, 200, await accounts.token(body));
     } catch (e) {
       return send(res, e.status || 400, { error: e.code || 'invalid_request', error_description: e.message });
@@ -517,6 +547,13 @@ export function createApp(opts = {}) {
         if (claims.via === 'oauth') return send(res, 403, { error: 'Sign in on the website to approve' });
         const b = await readJson(req);
         return send(res, 200, await accounts.authorize(claims, b.query || {}, b.decision));
+      }
+      // /link: a signed-in browser approves the code a TV is showing.
+      if (path === '/api/oauth/device') {
+        if (claims.via === 'oauth') return send(res, 403, { error: 'Sign in on the website to approve' });
+        const b = await readJson(req);
+        if (!b.decision) return send(res, 200, accounts.device.lookup(b.code));
+        return send(res, 200, await accounts.device.decide(claims, b.code, b.decision));
       }
       // The key vault: the browser (or `hdtilt vault unlock`) does the crypto.
       if (path === '/api/vault') {
@@ -707,7 +744,10 @@ export function createApp(opts = {}) {
       if (path === '/mcp') return await mcp(req, res);
       if (
         accounts &&
-        (path === '/.well-known/oauth-authorization-server' || path === '/oauth/token' || path === '/oauth/revoke')
+        (path === '/.well-known/oauth-authorization-server' ||
+          path === '/oauth/token' ||
+          path === '/oauth/revoke' ||
+          path === '/oauth/device_authorization')
       )
         return await oauthEndpoint(req, res, path);
       if (path.startsWith('/api/')) return await api(req, res, path);

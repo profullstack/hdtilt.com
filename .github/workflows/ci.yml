@@ -19,3 +19,12 @@ jobs:
       # The server tests read the built app shell.
       - run: bun run build
       - run: bun test
+  roku:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Compiles every BrightScript file and builds the sideload zip.
+      - run: npx -y -p brighterscript@0.69.10 bsc --project roku/bsconfig.json

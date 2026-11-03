@@ -1908,7 +1908,10 @@ function bindOpenProfileImporter(form) {
 }
 
 /** Where a CoinPay sign-in lands: back on the CLI consent page if that sent us, else home. */
-const afterCoinpay = () => (location.pathname === '/oauth/authorize' ? location.pathname + location.search : '/home');
+const afterCoinpay = () =>
+  location.pathname === '/oauth/authorize' || location.pathname === '/link'
+    ? location.pathname + location.search
+    : '/home';
 
 const COINPAY_LINK_SAYS = {
   linked: 'CoinPay connected: you can sign in with it now',
@@ -2186,6 +2189,43 @@ async function openConsent(query) {
   sh.querySelector('#o-no').onclick = () => go('deny');
 }
 
+/** /link: approve the code the hdtilt TV app (Roku) is showing. */
+async function openLink(prefill = '') {
+  if (!account.current()) {
+    return openAccount({
+      note: 'Sign in to connect hdtilt on your TV to your account.',
+      after: () => openLink(prefill),
+    });
+  }
+  const u = account.current();
+  const sh = sheet(
+    'account',
+    `<h1><img src="/icon.svg" alt="">Connect your TV</h1>
+    <p class="sub">Enter the code hdtilt shows on your TV. It will be able to read your playlists and favorites as <strong>${esc(u.username || u.email)}</strong>.</p>
+    <form id="l-form"><input class="field" id="l-code" name="code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" aria-label="Code from your TV" value="${esc(prefill)}" required>
+    <div class="actions"><button class="btn primary" type="submit">Connect</button></div>
+    <div class="err" id="l-err"></div></form>`,
+  );
+  const err = (m) => {
+    sh.querySelector('#l-err').textContent = m;
+  };
+  sh.querySelector('#l-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const code = sh.querySelector('#l-code').value;
+    try {
+      await account.linkDevice(code);
+      await account.linkDevice(code, 'approve');
+      sheet(
+        'account',
+        '<h1><img src="/icon.svg" alt="">Your TV is connected</h1><p class="sub">Go back to the TV: hdtilt opens your playlists there in a few seconds.</p>',
+      );
+    } catch (x) {
+      err(x.message);
+    }
+  };
+  if (!prefill) sh.querySelector('#l-code').focus();
+}
+
 /**
  * Sign-out on a shared screen: the account keeps the library, so this device
  * forgets its copy (playlists carry provider logins) and stops playing.
@@ -2248,6 +2288,11 @@ async function handleRoute() {
     await openConsent(q);
     return true;
   }
+  if (pathname === '/link') {
+    home();
+    await openLink(q.code || '');
+    return true;
+  }
   // Back from Sign in with CoinPay: a single-use code becomes this browser's session.
   if (pathname === '/oauth/coinpay') {
     home();
@@ -2272,6 +2317,7 @@ async function handleRoute() {
       history.replaceState({ depth: 0 }, '', next);
       if (next.startsWith('/oauth/authorize'))
         await openConsent(Object.fromEntries(new URL(next, location.origin).searchParams));
+      else if (next.startsWith('/link')) await openLink(new URL(next, location.origin).searchParams.get('code') || '');
       else render(next);
     } catch (x) {
       openAccount({ note: esc(x.message) });
@@ -2336,7 +2382,7 @@ async function mergeLibrary(remote) {
 //   /guide                    TV guide
 //   /settings  /settings/add  playlists
 //   /account  /account/signup  /account/forgot
-//   /verify  /reset  /oauth/authorize  /oauth/cli   (reached from outside)
+//   /verify  /reset  /oauth/authorize  /oauth/cli  /link   (reached from outside)
 
 let depth = history.state?.depth || 0;
 

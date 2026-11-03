@@ -129,6 +129,8 @@ export async function connectCoinpay() {
 export const disconnectCoinpay = () => call('/api/v1/coinpay/link', undefined, { auth: true, method: 'DELETE' });
 
 export const authorize = (query, decision) => call('/api/oauth/authorize', { query, decision }, { auth: true });
+/** /link: look up (no decision) or approve/deny the code a TV is showing. */
+export const linkDevice = (code, decision) => call('/api/oauth/device', { code, decision }, { auth: true });
 
 /* ------------------------------------------------------------------ sync */
 

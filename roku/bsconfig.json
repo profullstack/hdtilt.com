@@ -1,0 +1,9 @@
+{
+  "rootDir": ".",
+  "files": ["manifest", "source/**/*", "components/**/*", "images/**/*"],
+  "stagingDir": "../dist-roku/staging",
+  "outFile": "../dist-roku/hdtilt-roku.zip",
+  "createPackage": true,
+  "retainStagingDir": false,
+  "diagnosticFilters": []
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One HTTP request to the hdtilt server, off the render thread.
+     request:  { method, path, body (JSON) | form (urlencoded), auth (Bearer from the registry) }
+     response: { status, data, error, code }  (error "signin" = the TV must sign in again) -->
+<component name="ApiTask" extends="Task">
+  <interface>
+    <field id="request" type="assocarray" />
+    <field id="tag" type="string" />
+    <field id="response" type="assocarray" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/components/util.brs" />
+  <script type="text/brightscript" uri="pkg:/components/ApiTask.brs" />
+</component>

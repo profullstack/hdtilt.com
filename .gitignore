@@ -3,3 +3,4 @@ web/dist/
 dist-desktop/
 *.log
 .DS_Store
+dist-roku/
