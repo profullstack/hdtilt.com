@@ -27,4 +27,4 @@ jobs:
         with:
           node-version: 22
       # Compiles every BrightScript file and builds the sideload zip.
-      - run: npx -y -p brighterscript@0.69.10 bsc --project roku/bsconfig.json
+      - run: npx -y -p brighterscript@0.69.10 bsc --project appstores/roku/bsconfig.json

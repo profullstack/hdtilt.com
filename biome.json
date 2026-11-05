@@ -1,6 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
-  "files": { "includes": ["**", "!web/dist", "!dist-desktop", "!dist-roku", "!firetv", "!node_modules"] },
+  "files": { "includes": ["**", "!web/dist", "!dist-desktop", "!dist-roku", "!appstores/firetv", "!node_modules"] },
   "css": { "linter": { "enabled": true } },
   "formatter": { "indentStyle": "space", "lineWidth": 120 },
   "javascript": { "formatter": { "quoteStyle": "single" } },
