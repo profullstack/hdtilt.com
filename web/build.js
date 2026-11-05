@@ -2,6 +2,7 @@
 // only loads the demuxer it needs), copy the static shell, rasterise the icon.
 
 import { createHash } from 'node:crypto';
+import * as esbuild from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,26 +12,40 @@ const out = join(here, 'dist');
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
-const res = await Bun.build({
-  entrypoints: [join(here, 'src/app.js')],
+// esbuild rather than Bun.build, for `target` alone. Bun's bundler has no browser
+// version knob: `target: 'browser'` emits whatever the source uses AND `??=` inside
+// its own generated helpers, so the bundle fails to parse below Chromium 85 and the
+// page renders blank. That is invisible on a phone, which updates its WebView through
+// the Play Store, and fatal on a Fire TV, which does not. chrome70 is the floor the
+// Fire TV app targets (Fire OS 5), and esbuild lowers its own helpers to it too.
+const res = await esbuild.build({
+  entryPoints: [join(here, 'src/app.js')],
   outdir: out,
+  bundle: true,
   splitting: true,
   format: 'esm',
   minify: true,
-  target: 'browser',
+  target: ['chrome70'],
+  metafile: true,
   // Every file a page loads is named by its content, so a deploy can never
   // pair a new page with an hour-old cached script.
-  naming: { entry: '[name]-[hash].js', chunk: 'chunk-[hash].js' },
+  entryNames: '[name]-[hash]',
+  chunkNames: 'chunk-[hash]',
+  // The browser uses one function from @profullstack/profile, renderProfileFields,
+  // which is a pure template helper. Importing it from the package root also pulls
+  // the server half (handlers, store) and through it node:dns, node:net, node:https.
+  // Bun tree-shook those away; esbuild resolves before it shakes and refuses. The
+  // package's exports map has no subpath for the html half, so point at the file.
+  alias: {
+    '@profullstack/profile': join(here, '../node_modules/@profullstack/profile/src/html.js'),
+  },
 });
-if (!res.success) {
-  for (const l of res.logs) console.error(l);
-  process.exit(1);
-}
 await cp(join(here, 'public'), out, { recursive: true });
 
-const appJs = res.outputs
-  .find((o) => o.kind === 'entry-point')
-  .path.split('/')
+const outputs = Object.entries(res.metafile.outputs);
+const appJs = outputs
+  .find(([path, o]) => o.entryPoint && path.endsWith('.js'))[0]
+  .split('/')
   .pop();
 const css = await readFile(join(out, 'app.css'));
 const appCss = `app-${createHash('sha256').update(css).digest('hex').slice(0, 10)}.css`;
@@ -60,5 +75,6 @@ try {
 } catch (e) {
   console.warn(`icons not rasterised: ${e.message}`);
 }
-const kb = res.outputs.reduce((n, o) => n + o.size, 0) / 1024;
-console.log(`web/dist: ${res.outputs.length} files, ${kb.toFixed(0)} KB of JS`);
+const js = outputs.filter(([path]) => path.endsWith('.js'));
+const kb = js.reduce((n, [, o]) => n + o.bytes, 0) / 1024;
+console.log(`web/dist: ${js.length} files, ${kb.toFixed(0)} KB of JS`);
