@@ -1859,10 +1859,12 @@ const busy = async (btn, label, fn) => {
 /** The shared profile fields (@profullstack/profile); the form already has its own email box. */
 const PROFILE_FIELDS = ['first_name', 'last_name', 'company_domain', 'job_title', 'linkedin_url'];
 const profileFields = (values = {}, importOpenProfile = false) =>
-  renderProfileFields({ fields: PROFILE_FIELDS, idPrefix: 'a-', values, importOpenProfile }).replaceAll(
-    '<input ',
-    '<input class="field" ',
-  );
+  // split/join rather than replaceAll: the bundler lowers syntax to our browser
+  // floor but never polyfills methods, and String.replaceAll is Chromium 85. A
+  // Fire TV WebView throws here, on the first screen, and the page stays blank.
+  renderProfileFields({ fields: PROFILE_FIELDS, idPrefix: 'a-', values, importOpenProfile })
+    .split('<input ')
+    .join('<input class="field" ');
 const profileValues = (form) => Object.fromEntries(PROFILE_FIELDS.map((n) => [n, form.elements[n].value.trim()]));
 
 function bindOpenProfileImporter(form) {
