@@ -45,3 +45,12 @@ permission prompt, full-screen video, and an offline screen instead of Chrome's.
 ## Listing
 
 Copy and art live in `store/` — see `store/listing.md`.
+
+## Known limit: old WebViews
+
+On an API 30 emulator (WebView ~Chromium 83) the app launches but the page stays blank. The web bundle is built by Bun, and Bun emits `??=` in its own generated helpers regardless of what the source uses, so the whole script fails to parse below Chromium 85. Our own source has only one `??=` (`web/src/store.js`) and removing it does not help: the floor is the bundler's, not ours. Lifting it means bundling the web app with an explicit browser target (esbuild's `target: ['chrome80']` or equivalent) rather than Bun's `target: 'browser'`, which has no version knob.
+
+Google Play devices update WebView through the Play Store, so a current phone
+renders this correctly whatever its Android version — the floor only bites on
+devices that cannot update WebView, which is why it matters far more for
+`../firetv` than it does here. Check a real device before the first release.
