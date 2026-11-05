@@ -1,16 +1,47 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
-  "files": { "includes": ["**", "!web/dist", "!dist-desktop", "!dist-roku", "!appstores/firetv", "!node_modules"] },
-  "css": { "linter": { "enabled": true } },
-  "formatter": { "indentStyle": "space", "lineWidth": 120 },
-  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "files": {
+    "includes": [
+      "**",
+      "!web/dist",
+      "!dist-desktop",
+      "!dist-roku",
+      "!appstores/firetv",
+      "!appstores/android",
+      "!node_modules"
+    ]
+  },
+  "css": {
+    "linter": {
+      "enabled": true
+    }
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single"
+    }
+  },
   "linter": {
     "rules": {
       "preset": "recommended",
-      "style": { "noParameterAssign": "off", "noDescendingSpecificity": "off" },
-      "suspicious": { "noAssignInExpressions": "off" },
-      "complexity": { "noCommaOperator": "off", "noImportantStyles": "off" },
-      "a11y": { "useMediaCaption": "off" }
+      "style": {
+        "noParameterAssign": "off",
+        "noDescendingSpecificity": "off"
+      },
+      "suspicious": {
+        "noAssignInExpressions": "off"
+      },
+      "complexity": {
+        "noCommaOperator": "off",
+        "noImportantStyles": "off"
+      },
+      "a11y": {
+        "useMediaCaption": "off"
+      }
     }
   }
 }
