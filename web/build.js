@@ -40,9 +40,36 @@ const res = await esbuild.build({
     '@profullstack/profile': join(here, '../node_modules/@profullstack/profile/src/html.js'),
   },
 });
+const outputs = Object.entries(res.metafile.outputs);
+
+// esbuild lowers SYNTAX to the target and never touches METHODS, so a single
+// str.replaceAll() (Chromium 85) throws at runtime on a Fire TV WebView and the
+// page renders blank with nothing in the build log. These are the methods newer
+// than the oldest engine we have actually tested against, WebView 83.
+// Only methods people reach for without feature-detecting them. crypto.randomUUID
+// and WeakRef are deliberately absent: both are normally wrapped in a try/catch
+// with a fallback, and a dependency here does exactly that.
+const TOO_NEW = [
+  ['replaceAll', 85],
+  ['Promise.any', 85],
+  ['.at(', 92],
+  ['Object.hasOwn', 93],
+  ['findLast', 97],
+  ['structuredClone', 98],
+  ['toSorted', 110],
+  ['Object.groupBy', 117],
+];
+const bundled = await Promise.all(
+  outputs.filter(([path]) => path.endsWith('.js')).map(([path]) => readFile(path, 'utf8')),
+);
+const late = TOO_NEW.filter(([api]) => bundled.some((code) => code.includes(api)));
+if (late.length) {
+  for (const [api, since] of late) console.error(`${api} is Chromium ${since}; the floor is 83`);
+  throw new Error('bundle uses a method newer than the browser floor');
+}
+
 await cp(join(here, 'public'), out, { recursive: true });
 
-const outputs = Object.entries(res.metafile.outputs);
 const appJs = outputs
   .find(([path, o]) => o.entryPoint && path.endsWith('.js'))[0]
   .split('/')
