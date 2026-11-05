@@ -2,10 +2,10 @@
 // only loads the demuxer it needs), copy the static shell, rasterise the icon.
 
 import { createHash } from 'node:crypto';
-import * as esbuild from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as esbuild from 'esbuild';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, 'dist');
