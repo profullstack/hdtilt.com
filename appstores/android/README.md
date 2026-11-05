@@ -46,11 +46,21 @@ permission prompt, full-screen video, and an offline screen instead of Chrome's.
 
 Copy and art live in `store/` — see `store/listing.md`.
 
-## Known limit: old WebViews
+## The WebView floor, and how it was found
 
-On an API 30 emulator (WebView ~Chromium 83) the app launches but the page stays blank. The web bundle is built by Bun, and Bun emits `??=` in its own generated helpers regardless of what the source uses, so the whole script fails to parse below Chromium 85. Our own source has only one `??=` (`web/src/store.js`) and removing it does not help: the floor is the bundler's, not ours. Lifting it means bundling the web app with an explicit browser target (esbuild's `target: ['chrome80']` or equivalent) rather than Bun's `target: 'browser'`, which has no version knob.
+The app renders correctly on a WebView reporting **83.0.4103.106** (an API 30
+emulator), which is the oldest engine this has been tested against. Getting there
+took two fixes, and the second is the instructive one:
 
-Google Play devices update WebView through the Play Store, so a current phone
-renders this correctly whatever its Android version — the floor only bites on
-devices that cannot update WebView, which is why it matters far more for
-`../firetv` than it does here. Check a real device before the first release.
+1. The web bundle is built by esbuild against `chrome70`, not Bun. Bun's bundler has
+   no browser version knob and emits `??=` in its own generated helpers, so the
+   script failed to parse below Chromium 85 and the page was blank.
+2. **Lowering syntax was not enough.** A bundler never polyfills *methods*, and the
+   account screen called `String.replaceAll` (Chromium 85), so the WebView threw on
+   the first screen and the page was still blank. `web/build.js` now fails the build
+   when the output contains a method newer than the floor.
+
+Play devices update WebView through the Play Store, so none of this is visible on a
+current phone. It matters for `../firetv`, where the engine is frozen — and because
+the Fire TV app loads the live site, fixing the site fixed that app too, with no new
+APK needed.
