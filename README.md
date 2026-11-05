@@ -126,13 +126,13 @@ Tools: `list_playlists`, `add_playlist`, `list_groups`, `list_channels`, `whats_
 
 ## Roku
 
-`roku/` is a native SceneGraph app for hdtilt.com. On first launch it shows a code; open
+`appstores/roku/` is a native SceneGraph app for hdtilt.com. On first launch it shows a code; open
 **hdtilt.com/link** on a phone, sign in and enter it. It then opens the account's playlists:
 Favorites, All channels, Search, Movies, Shows and every group, with ▲▼ to change channel.
 Streams a Roku decodes play straight from the provider; transport streams (and anything that
 fails) go through hdtilt's HLS remux.
 
-Build the sideload zip with `npx -p brighterscript bsc --project roku/bsconfig.json`
+Build the sideload zip with `npx -p brighterscript bsc --project appstores/roku/bsconfig.json`
 (`dist-roku/hdtilt-roku.zip`, also attached to every release), then upload it at
 `http://<roku-ip>` with the device in developer mode.
 

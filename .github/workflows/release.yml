@@ -58,7 +58,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx -y -p brighterscript@0.69.10 bsc --project roku/bsconfig.json
+      - run: npx -y -p brighterscript@0.69.10 bsc --project appstores/roku/bsconfig.json
       - uses: softprops/action-gh-release@v2
         with:
           files: dist-roku/hdtilt-roku.zip
