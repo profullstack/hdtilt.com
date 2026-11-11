@@ -19,11 +19,15 @@ const sourceArg = {
 export const TOOLS = [
   {
     name: 'list_playlists',
+    title: 'List Playlists',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     description: 'Saved IPTV playlists (names and kinds; never passwords).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'add_playlist',
+    title: 'Add Playlist',
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: true },
     description: 'Save an M3U URL or an Xtream Codes login as a named playlist.',
     inputSchema: {
       type: 'object',
@@ -40,11 +44,15 @@ export const TOOLS = [
   },
   {
     name: 'list_groups',
+    title: 'List Channel Groups',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description: 'Channel groups (categories) with counts.',
     inputSchema: { type: 'object', properties: { source: sourceArg, playlist: playlistArg } },
   },
   {
     name: 'list_channels',
+    title: 'List Channels',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description: 'Channels, optionally filtered by group or a search (name or number).',
     inputSchema: {
       type: 'object',
@@ -59,6 +67,8 @@ export const TOOLS = [
   },
   {
     name: 'whats_on',
+    title: "What's On Now",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description: 'What is on now and next, from the guide, for matching channels.',
     inputSchema: {
       type: 'object',
@@ -73,6 +83,8 @@ export const TOOLS = [
   },
   {
     name: 'channel_guide',
+    title: 'Channel Guide',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description: "One channel's programmes for the next N hours (negative start for catch-up).",
     inputSchema: {
       type: 'object',
@@ -88,6 +100,8 @@ export const TOOLS = [
   },
   {
     name: 'stream_url',
+    title: 'Get Stream URL',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description: 'The playable URL for a channel, or for a past programme when the channel has catch-up.',
     inputSchema: {
       type: 'object',
@@ -102,6 +116,8 @@ export const TOOLS = [
   },
   {
     name: 'movies_shows',
+    title: 'Browse Movies and Shows',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description:
       "Films and series on an Xtream line (or an M3U's /movie/ and /series/ entries): with nothing else, the categories; with category, its titles; with query, a search of every title; with seriesId, that show's episodes. Films and episodes come with their stream URL.",
     inputSchema: {
@@ -119,6 +135,8 @@ export const TOOLS = [
   },
   {
     name: 'find_subtitles',
+    title: 'Find Subtitles',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description:
       'Subtitles for a film or an episode, from OpenSubtitles. Give a title (a provider name like "EN - Film (1999) 4K" is cleaned up) or a tmdbId; for an episode add season and episode (title/tmdbId are then the show). Best match first; fetch one with fetch_subtitle.',
     inputSchema: {
@@ -136,6 +154,8 @@ export const TOOLS = [
   },
   {
     name: 'fetch_subtitle',
+    title: 'Fetch Subtitle',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     description:
       'One subtitle file as WebVTT text, by the fileId find_subtitles gave. Spends one of the daily downloads.',
     inputSchema: { type: 'object', properties: { fileId: { type: 'number' } }, required: ['fileId'] },
