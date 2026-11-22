@@ -178,6 +178,11 @@ describe('conversion arguments', () => {
 // The real thing: an MKV with AC-3 audio, which no browser plays, comes out as
 // fMP4 HLS with AAC. Needs ffmpeg (CI installs it; locally set HDTILT_FFMPEG).
 const ffmpeg = hasFfmpeg();
+// A playlist is answered once its first 6 second segment exists. The read burst
+// usually makes that immediate, but these tests are about what comes out, not
+// how soon: an ffmpeg that paces from the first frame needs the full 6 seconds,
+// which is past bun's 5 second default.
+const FIRST_SEGMENT = 20_000;
 describe.skipIf(!ffmpeg)('films through ffmpeg', () => {
   let dir;
   let files;
@@ -253,29 +258,37 @@ describe.skipIf(!ffmpeg)('films through ffmpeg', () => {
     expect(r.duration).toBeGreaterThan(19);
   });
 
-  it('makes HLS that starts at the beginning, with AAC sound', async () => {
-    const res = await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=0`);
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toContain('#EXT-X-START:TIME-OFFSET=0');
-    const init = /#EXT-X-MAP:URI="([^"]+)"/.exec(text)?.[1];
-    expect(init).toMatch(/^\/hls\/s\/[a-f0-9]{24}\/init\.mp4$/);
-    const initBytes = Buffer.from(await (await fetch(`${base}${init}`)).arrayBuffer());
-    expect(initBytes.includes('mp4a')).toBe(true);
-    expect(initBytes.includes('avc1')).toBe(true);
-    const seg = text.split('\n').find((l) => l.endsWith('.m4s'));
-    const s = await fetch(`${base}${seg}`);
-    expect(s.status).toBe(200);
-    expect(s.headers.get('content-type')).toBe('video/mp4');
-    expect((await s.arrayBuffer()).byteLength).toBeGreaterThan(1000);
-  });
+  it(
+    'makes HLS that starts at the beginning, with AAC sound',
+    async () => {
+      const res = await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=0`);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain('#EXT-X-START:TIME-OFFSET=0');
+      const init = /#EXT-X-MAP:URI="([^"]+)"/.exec(text)?.[1];
+      expect(init).toMatch(/^\/hls\/s\/[a-f0-9]{24}\/init\.mp4$/);
+      const initBytes = Buffer.from(await (await fetch(`${base}${init}`)).arrayBuffer());
+      expect(initBytes.includes('mp4a')).toBe(true);
+      expect(initBytes.includes('avc1')).toBe(true);
+      const seg = text.split('\n').find((l) => l.endsWith('.m4s'));
+      const s = await fetch(`${base}${seg}`);
+      expect(s.status).toBe(200);
+      expect(s.headers.get('content-type')).toBe('video/mp4');
+      expect((await s.arrayBuffer()).byteLength).toBeGreaterThan(1000);
+    },
+    FIRST_SEGMENT,
+  );
 
-  it('starts somewhere else as its own session', async () => {
-    const a = await (await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=0`)).text();
-    const b = await (await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=12`)).text();
-    const key = (t) => /\/hls\/s\/([a-f0-9]{24})\//.exec(t)?.[1];
-    expect(key(a)).toBeTruthy();
-    expect(key(b)).toBeTruthy();
-    expect(key(a)).not.toBe(key(b));
-  });
+  it(
+    'starts somewhere else as its own session',
+    async () => {
+      const a = await (await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=0`)).text();
+      const b = await (await fetch(`${base}/hls/${b64urlEncode(mkvUrl)}/index.m3u8?vod=1&t=12`)).text();
+      const key = (t) => /\/hls\/s\/([a-f0-9]{24})\//.exec(t)?.[1];
+      expect(key(a)).toBeTruthy();
+      expect(key(b)).toBeTruthy();
+      expect(key(a)).not.toBe(key(b));
+    },
+    2 * FIRST_SEGMENT,
+  );
 });
