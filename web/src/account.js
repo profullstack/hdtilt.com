@@ -188,11 +188,19 @@ export function mergeLibraries(local, remote) {
   for (const [id, list] of Object.entries(local.favorites || {})) {
     favorites[id] = [...new Set([...(favorites[id] || []), ...list])];
   }
+  // Moved-to-the-top favorites: the account's order first, so the last device to
+  // write decides what is on top; never one that is not a favorite.
+  const pins = { ...(remote.pins || {}) };
+  for (const [id, list] of Object.entries(local.pins || {})) pins[id] = [...new Set([...(pins[id] || []), ...list])];
+  for (const id of Object.keys(pins)) {
+    const favs = new Set(favorites[id] || []);
+    pins[id] = pins[id].filter((x) => favs.has(x));
+  }
   const recent = { ...(remote.recent || {}) };
   for (const [id, list] of Object.entries(local.recent || {})) {
     recent[id] = [...new Set([...list, ...(recent[id] || [])])].slice(0, 40);
   }
-  return { playlists: [...byId.values()], favorites, recent, deleted };
+  return { playlists: [...byId.values()], favorites, pins, recent, deleted };
 }
 
 /* ------------------------------------------------------------------ key vault */
