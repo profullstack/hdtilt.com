@@ -21,7 +21,10 @@ export function createCrawlGate(env = process.env) {
     payTo,
     contact: 'mailto:anthony@profullstack.com',
     openPaths: ['/api/health', '/llms.txt', '/install.sh', '/.well-known/'],
-    exempt: (request) => /(?:^|;\s*)hdtilt_media=/.test(request.headers.get('cookie') ?? ''),
+    // A session cookie that is merely present is a hint, never a pass (x402-gateway
+    // 0.18.3): it spares a signed-in reader's odd browser string, but GPTBot with a
+    // made-up cookie is still charged. It used to be `exempt`, which let it read free.
+    sessionCookie: 'hdtilt_media',
   });
 }
 

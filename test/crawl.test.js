@@ -37,6 +37,9 @@ describe('crawl gateway', () => {
     const body = await r.json();
     expect(body.accepts[0].amount).toBe('1000000');
   });
+  it('does not let a forged media cookie exempt GPTBot (x402-gateway 0.18.3 sessionCookie)', async () => {
+    expect((await fetch(at('/'), { headers: { 'user-agent': GPT, cookie: 'hdtilt_media=forged' } })).status).toBe(402);
+  });
   it('lets a browser and the health check through', async () => {
     expect((await fetch(at('/api/health'), { headers: { 'user-agent': GPT } })).status).toBe(200);
     expect((await fetch(at('/'), { headers: CHROME })).status).not.toBe(402);
