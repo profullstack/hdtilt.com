@@ -64,6 +64,7 @@ const S = {
   byId: new Map(),
   groups: [],
   favs: new Set(),
+  pins: [], // favorites moved to the top, first one on top
   recent: [],
   group: ALL,
   view: [], // channels in the open group
@@ -168,7 +169,9 @@ async function usePlaylist(pl, { refresh = false, channelId = null, background =
       return openSettings();
     }
   }
+  await settleLeaving();
   S.favs = new Set(await store.get(`fav:${pl.id}`, []));
+  S.pins = await store.get(`pin:${pl.id}`, []);
   S.recent = await store.get(`recent:${pl.id}`, []);
   await vod.loadHistory(pl.id);
   buildGroups();
@@ -248,9 +251,18 @@ function buildGroups() {
   }
 }
 
+/** Favorites: the ones moved to the top first (newest move on top), the rest in playlist order. */
+function favList() {
+  const favs = S.live.filter((c) => S.favs.has(c.id));
+  if (!S.pins.length) return favs;
+  const top = new Set(S.pins);
+  const pinned = S.pins.map((id) => S.byId.get(id)).filter((c) => c && S.favs.has(c.id));
+  return [...pinned, ...favs.filter((c) => !top.has(c.id))];
+}
+
 /** The channels of the current group, before any filter. */
 function groupList() {
-  if (S.group === FAV) return S.live.filter((c) => S.favs.has(c.id));
+  if (S.group === FAV) return favList();
   if (S.group === RECENT) return S.recent.map((id) => S.byId.get(id)).filter(Boolean);
   if (S.group === ALL) return S.live;
   return S.live.filter((c) => c.group === S.group);
@@ -897,7 +909,11 @@ function renderHead(focusFilter = false) {
 
 function updateCount() {
   const c = $('list-count');
-  if (c) c.textContent = `${S.view.length} · ☆ or F favorites · ◀ groups`;
+  if (c)
+    c.textContent =
+      S.group === FAV
+        ? `${S.view.length} · ☆ or F removes after 10 seconds, again keeps · T moves to the top · ◀ groups`
+        : `${S.view.length} · ☆ or F favorites · ◀ groups`;
 }
 
 function renderChannels(scrollToFocus = false) {
@@ -927,13 +943,22 @@ function renderChannels(scrollToFocus = false) {
     const c = S.view[i];
     visible.push(c);
     const { now } = nn(c);
-    const cls = `row${i === S.focus && S.pane === 'channels' ? ' focus' : ''}${c.id === S.playing?.id ? ' playing' : ''}`;
-    rows.push(`<div class="${cls}" data-i="${i}" style="top:${i * rp + 4}px" role="option">
+    const out = leaving.get(c.id);
+    const fav = S.favs.has(c.id) && !out;
+    const pinned = S.pins.includes(c.id);
+    const cls = `row${i === S.focus && S.pane === 'channels' ? ' focus' : ''}${c.id === S.playing?.id ? ' playing' : ''}${out ? ' leaving' : ''}`;
+    // A row is rebuilt on every scroll: a negative delay resumes its fade where it was.
+    const fade = out ? `;animation-delay:-${Date.now() - out.at}ms` : '';
+    rows.push(`<div class="${cls}" data-i="${i}" style="top:${i * rp + 4}px${fade}" role="option">
       <span class="no">${c.chno ?? i + 1}</span>${logo(c, 'logo')}
       <span class="meta"><div class="nm">${esc(c.name)}</div>
       <div class="pg">${now ? `${esc(now.title)}` : S.data?.epgUrl ? '&nbsp;' : esc(c.group)}</div>
       ${now ? `<div class="bar"><i style="width:${(progress(now) * 100).toFixed(1)}%"></i></div>` : ''}</span>
-      <button type="button" class="fav-btn${S.favs.has(c.id) ? ' on' : ''}" data-fav="${i}" tabindex="-1" aria-pressed="${S.favs.has(c.id)}" aria-label="${S.favs.has(c.id) ? 'Remove from' : 'Add to'} favorites">${S.favs.has(c.id) ? '★' : '☆'}</button></div>`);
+      <span class="acts">${
+        S.group === FAV && !out
+          ? `<button type="button" class="pin-btn${pinned ? ' on' : ''}" data-pin="${i}" tabindex="-1" aria-pressed="${pinned}" aria-label="${pinned ? 'Back to its usual place' : 'Move to the top of favorites'}" title="${pinned ? 'Back to its usual place' : 'Move to the top'}">${PIN_ICON}</button>`
+          : ''
+      }<button type="button" class="fav-btn${fav ? ' on' : ''}" data-fav="${i}" tabindex="-1" aria-pressed="${fav}" aria-label="${out ? 'Keep in' : fav ? 'Remove from' : 'Add to'} favorites"${out ? ' title="Keep in favorites"' : ''}>${fav ? '★' : '☆'}</button></span></div>`);
   }
   for (const r of box.querySelectorAll('.row')) r.remove();
   spacer.insertAdjacentHTML('afterend', rows.join(''));
@@ -946,6 +971,11 @@ $('channels').addEventListener('click', (e) => {
   if (star) {
     e.stopPropagation();
     return toggleFav(S.view[Number(star.dataset.fav)]);
+  }
+  const pin = e.target.closest('.pin-btn');
+  if (pin) {
+    e.stopPropagation();
+    return togglePin(S.view[Number(pin.dataset.pin)]);
   }
   const r = e.target.closest('.row');
   if (!r) return;
@@ -967,7 +997,7 @@ let longPressed = false;
 let pressTimer = 0;
 $('channels').addEventListener('pointerdown', (e) => {
   const r = e.target.closest('.row');
-  if (!r) return;
+  if (!r || e.target.closest('.acts')) return;
   longPressed = false;
   pressTimer = setTimeout(() => {
     longPressed = true;
@@ -987,26 +1017,116 @@ function moveFocus(step) {
   renderChannels(true);
 }
 
+const LEAVE_MS = 10000;
+const PIN_ICON =
+  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14M12 20V9M6 14l6-6 6 6"/></svg>';
+/**
+ * Favorites on their way out: id -> { ch, plId, at, timer }. Where a list shows
+ * favorites only, un-starring one would make its row vanish under the finger,
+ * so it fades for ten seconds first and the same star (or F) keeps it. It is
+ * still a favorite, here and in the synced library, until the timer fires.
+ */
+const leaving = new Map();
+
+/** A list of favorites only: the Favorites group, or the guide switched to favorites. */
+const favsOnly = () => (S.mode === 'list' && S.group === FAV) || (S.mode === 'guide' && G.favs);
+
 async function toggleFav(ch) {
   if (!ch) return;
-  S.favs.has(ch.id) ? S.favs.delete(ch.id) : S.favs.add(ch.id);
-  await store.set(`fav:${S.pl.id}`, [...S.favs]);
+  const out = leaving.get(ch.id);
+  if (out) {
+    clearTimeout(out.timer);
+    leaving.delete(ch.id);
+    toast(`★ ${ch.name} stays in favorites`);
+    return paintFavs();
+  }
+  if (S.favs.has(ch.id) && favsOnly()) {
+    const id = ch.id;
+    leaving.set(id, { ch, plId: S.pl.id, at: Date.now(), timer: setTimeout(() => dropFav(id), LEAVE_MS) });
+    toast(`${ch.name} leaves favorites in 10 seconds. ☆ or F again keeps it.`);
+    return paintFavs();
+  }
+  await setFav(ch, !S.favs.has(ch.id));
+}
+
+/** The ten seconds are up (or the playlist is changing): it goes for real. */
+async function dropFav(id) {
+  const out = leaving.get(id);
+  if (!out) return;
+  clearTimeout(out.timer);
+  leaving.delete(id);
+  if (S.pl?.id === out.plId) return setFav(out.ch, false, true);
+  for (const k of ['fav', 'pin']) {
+    const list = await store.get(`${k}:${out.plId}`, []);
+    await store.set(
+      `${k}:${out.plId}`,
+      list.filter((x) => x !== id),
+    );
+  }
   account.changed();
-  S.groups[0].count = S.favs.size;
+}
+
+/** Nothing is left fading across a playlist change. */
+async function settleLeaving() {
+  for (const id of [...leaving.keys()]) await dropFav(id);
+}
+
+async function setFav(ch, on, quiet = false) {
+  on ? S.favs.add(ch.id) : S.favs.delete(ch.id);
+  await store.set(`fav:${S.pl.id}`, [...S.favs]);
+  if (!on && S.pins.includes(ch.id)) {
+    S.pins = S.pins.filter((id) => id !== ch.id);
+    await store.set(`pin:${S.pl.id}`, S.pins);
+  }
+  account.changed();
+  if (S.groups[0]) S.groups[0].count = S.favs.size;
+  if (S.mode === 'guide' && !quiet) toast(on ? `★ ${ch.name} added to favorites` : `${ch.name} removed from favorites`);
+  paintFavs();
+}
+
+/** Redraw whatever is showing favorites, keeping the selection where it was. */
+function paintFavs() {
   if (S.mode === 'list') {
-    if (S.group === FAV) setView();
+    if (S.group === FAV) {
+      // setView() jumps to the playing channel; a row leaving on its timer
+      // must not move a selection that is somewhere else by now.
+      const at = S.focus;
+      const held = S.view[at]?.id;
+      setView();
+      const i = S.view.findIndex((c) => c.id === held);
+      S.focus = i >= 0 ? i : Math.max(0, Math.min(at, S.view.length - 1));
+    }
     renderGroups();
     updateCount();
     renderChannels();
   } else if (S.mode === 'guide') {
-    toast(S.favs.has(ch.id) ? `★ ${ch.name} added to favorites` : `${ch.name} removed from favorites`);
     if (G.favs) {
+      const held = G.list[G.row]?.id;
       G.list = guideChannels();
-      G.row = Math.min(G.row, Math.max(0, G.list.length - 1));
-      renderGuide();
+      const i = G.list.findIndex((c) => c.id === held);
+      G.row = i >= 0 ? i : Math.min(G.row, Math.max(0, G.list.length - 1));
     }
+    renderGuide();
     syncGuideFav();
   } else showBanner();
+}
+
+/** Move a favorite to the top of the list, or put it back where the playlist has it. */
+async function togglePin(ch) {
+  if (!ch || !S.favs.has(ch.id) || leaving.has(ch.id)) return;
+  const was = S.pins.includes(ch.id);
+  S.pins = S.pins.filter((id) => id !== ch.id);
+  if (!was) S.pins.unshift(ch.id);
+  await store.set(`pin:${S.pl.id}`, S.pins);
+  account.changed();
+  toast(was ? `${ch.name} is back in its usual place` : `${ch.name} moved to the top of favorites`);
+  if (S.mode === 'list' && S.group === FAV) {
+    // The selection stays on the row position, ready for the next one to move.
+    const at = S.focus;
+    setView();
+    S.focus = Math.max(0, Math.min(at, S.view.length - 1));
+    renderChannels();
+  }
 }
 
 /* ---------------------------------------------------------- Movies & Shows */
@@ -1321,7 +1441,7 @@ const SLOT = 30 * 60_000;
  * else the open group, where Favorites as the group means everything.
  */
 function guideChannels() {
-  const base = G.favs ? S.live.filter((c) => S.favs.has(c.id)) : S.group === FAV ? S.live : groupList();
+  const base = G.favs ? favList() : S.group === FAV ? S.live : groupList();
   return filterChannels(base, G.q);
 }
 
@@ -1416,7 +1536,8 @@ function renderGuide() {
     if (!inWin.length) {
       cells = `<div class="g-p nodata${r === G.row ? ' focus' : ''}" data-r="${r}" style="left:${chW + 2}px;width:${span * pxPerMs - 4}px">${S.data?.epgUrl ? (S.epgAsked.has(c.id) ? 'No information' : 'Loading…') : esc(c.name)}</div>`;
     }
-    rows += `<div class="g-row" style="top:${k * rowH}px"><div class="g-ch" data-r="${r}"><span class="no">${c.chno ?? r + 1}</span>${logo(c, 'logo')}<span class="nm">${esc(c.name)}</span></div>${cells}</div>`;
+    const out = leaving.get(c.id);
+    rows += `<div class="g-row${out ? ' leaving' : ''}" style="top:${k * rowH}px${out ? `;animation-delay:-${Date.now() - out.at}ms` : ''}"><div class="g-ch" data-r="${r}"><span class="no">${c.chno ?? r + 1}</span>${logo(c, 'logo')}<span class="nm">${esc(c.name)}</span></div>${cells}</div>`;
   });
   if (!G.list.length) {
     grid.innerHTML = `<div class="empty">${G.favs && !S.favs.size ? 'No favorites yet. Press F on a channel (or tap ☆) to add one, or switch Favorites off.' : `No channel here matches "${esc(G.q)}".`}</div>`;
@@ -1673,7 +1794,7 @@ function openSettings() {
           'playlists',
           S.playlists.filter((p) => p.source.type !== 'saved'),
         );
-        for (const k of ['ch', 'fav', 'recent']) await store.del(`${k}:${pl.id}`);
+        for (const k of ['ch', 'fav', 'pin', 'recent']) await store.del(`${k}:${pl.id}`);
         if (S.pl?.id === pl.id) {
           S.attached?.destroy();
           S.pl = null;
@@ -2237,7 +2358,9 @@ async function forgetDevice() {
   S.attached = null;
   $('video').pause();
   $('video').removeAttribute('src');
-  for (const p of S.playlists) for (const k of ['ch', 'fav', 'recent']) await store.del(`${k}:${p.id}`);
+  for (const out of leaving.values()) clearTimeout(out.timer);
+  leaving.clear();
+  for (const p of S.playlists) for (const k of ['ch', 'fav', 'pin', 'recent']) await store.del(`${k}:${p.id}`);
   await store.del('playlists');
   for (const k of ['current', 'deletedPlaylists', 'libraryVersion']) store.prefs.write(k, null);
   Object.assign(S, {
@@ -2248,6 +2371,7 @@ async function forgetDevice() {
     playing: null,
     previous: null,
     favs: new Set(),
+    pins: [], // favorites moved to the top, first one on top
     recent: [],
   });
   S.byId = new Map();
@@ -2343,14 +2467,17 @@ async function handleRoute() {
 async function collectLibrary() {
   const playlists = S.playlists.filter((p) => p.source.type !== 'saved' && p.source.type !== 'text');
   const favorites = {};
+  const pins = {};
   const recent = {};
   for (const p of playlists) {
     favorites[p.id] = p.id === S.pl?.id ? [...S.favs] : await store.get(`fav:${p.id}`, []);
+    pins[p.id] = p.id === S.pl?.id ? S.pins : await store.get(`pin:${p.id}`, []);
     recent[p.id] = p.id === S.pl?.id ? S.recent : await store.get(`recent:${p.id}`, []);
   }
   return {
     playlists: playlists.map(({ id, name, source }) => ({ id, name, source })),
     favorites,
+    pins,
     recent,
     deleted: store.prefs.read('deletedPlaylists', []),
   };
@@ -2367,9 +2494,11 @@ async function mergeLibrary(remote) {
     S.playlists.filter((p) => p.source.type !== 'saved'),
   );
   for (const [id, list] of Object.entries(merged.favorites)) await store.set(`fav:${id}`, list);
+  for (const [id, list] of Object.entries(merged.pins)) await store.set(`pin:${id}`, list);
   for (const [id, list] of Object.entries(merged.recent)) await store.set(`recent:${id}`, list);
   if (S.pl) {
     S.favs = new Set(merged.favorites[S.pl.id] || [...S.favs]);
+    S.pins = merged.pins[S.pl.id] || S.pins;
     S.recent = merged.recent[S.pl.id] || S.recent;
     buildGroups();
   }
@@ -2898,6 +3027,8 @@ addEventListener('keydown', (e) => {
         else play(ch);
       }
     } else if (k === 'f' || k === 'ColorF1Green') toggleFav(S.view[S.focus]);
+    else if ((k === 't' || k === 'ColorF2Yellow') && S.group === FAV && S.pane === 'channels')
+      togglePin(S.view[S.focus]);
     else if (k === 'g' || k === 'Guide') go('/guide');
     else if (k === '/') $('q')?.focus();
     else if (/^\d$/.test(k)) numberKey(k);
