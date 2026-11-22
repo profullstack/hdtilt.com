@@ -25,6 +25,7 @@ import {
 } from '@profullstack/profile';
 import jwt from 'jsonwebtoken';
 import { createCoinpaySignIn, isCoinpayOnly, isPlaceholderEmail } from './coinpay.js';
+import { coinpayFetch } from './coinpay-ua.js';
 import { createDeviceFlow, TV_CLIENT_ID } from './tv.js';
 import {
   dataKeyFor,
@@ -415,7 +416,7 @@ export function createAccounts(opts = {}) {
     auth,
     publicUser,
     profileStore,
-    fetch: opts.coinpayFetch,
+    fetch: opts.coinpayFetch ?? coinpayFetch,
     base: env.COINPAY_BASE_URL || undefined,
   });
 

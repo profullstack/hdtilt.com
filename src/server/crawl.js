@@ -6,6 +6,7 @@
 // or desktop server never sells anything.
 
 import { createGateway } from '@profullstack/x402-gateway';
+import { coinpayFetch } from './coinpay-ua.js';
 
 /** @param {NodeJS.ProcessEnv} env */
 export function createCrawlGate(env = process.env) {
@@ -16,6 +17,7 @@ export function createCrawlGate(env = process.env) {
     siteUrl: (env.SITE_URL || 'https://hdtilt.com').replace(/\/+$/, ''),
     siteName: 'hdtilt',
     coinpay: { apiKey },
+    fetch: coinpayFetch,
     payTo,
     contact: 'mailto:anthony@profullstack.com',
     openPaths: ['/api/health', '/llms.txt', '/install.sh', '/.well-known/'],
