@@ -40,6 +40,18 @@ describe('crawl gateway', () => {
   it('does not let a forged media cookie exempt GPTBot (x402-gateway 0.18.3 sessionCookie)', async () => {
     expect((await fetch(at('/'), { headers: { 'user-agent': GPT, cookie: 'hdtilt_media=forged' } })).status).toBe(402);
   });
+  it('lets GPTBot read robots.txt and the sitemap (x402-gateway 0.18.4 open paths)', async () => {
+    const robots = await fetch(at('/robots.txt'), { headers: { 'user-agent': GPT } });
+    expect(robots.status).toBe(200);
+    expect(robots.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(await robots.text()).toContain('Sitemap: https://hdtilt.com/sitemap.xml');
+    const sitemap = await fetch(at('/sitemap.xml'), { headers: { 'user-agent': GPT } });
+    expect(sitemap.status).toBe(200);
+    expect(sitemap.headers.get('content-type')).toBe('application/xml; charset=utf-8');
+    const xml = await sitemap.text();
+    expect(xml).toContain('<loc>https://hdtilt.com/</loc>');
+    expect(xml).toContain('<loc>https://hdtilt.com/privacy.html</loc>');
+  });
   it('lets a browser and the health check through', async () => {
     expect((await fetch(at('/api/health'), { headers: { 'user-agent': GPT } })).status).toBe(200);
     expect((await fetch(at('/'), { headers: CHROME })).status).not.toBe(402);

@@ -721,6 +721,30 @@ export function createApp(opts = {}) {
     }
   }
 
+  // The public pages a search engine can index: the player shell and the two legal
+  // pages. Everything else is the app (client routes) or needs an account.
+  const siteUrl = (process.env.SITE_URL || 'https://hdtilt.com').replace(/\/+$/, '');
+  const disallow = ['/api/', '/p/', '/hls/', '/subs/', '/oauth/', '/mcp'];
+  const robots = () =>
+    crawlGate
+      ? crawlGate.robotsTxt({ disallow })
+      : [
+          'User-agent: *',
+          'Allow: /',
+          ...disallow.map((d) => `Disallow: ${d}`),
+          '',
+          `Sitemap: ${siteUrl}/sitemap.xml`,
+          '',
+        ].join('\n');
+  const sitemap = () =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[
+      '/',
+      '/privacy.html',
+      '/terms.html',
+    ]
+      .map((page) => `  <url><loc>${siteUrl}${page}</loc></url>`)
+      .join('\n')}\n</urlset>\n`;
+
   const handler = async function handler(req, res) {
     const url = new URL(req.url, 'http://x');
     const path = url.pathname;
@@ -732,6 +756,12 @@ export function createApp(opts = {}) {
           'access-control-allow-headers': 'content-type, range, authorization, mcp-protocol-version, mcp-session-id',
         });
       }
+      if (path === '/robots.txt') return send(res, 200, robots(), { 'cache-control': 'public, max-age=3600' });
+      if (path === '/sitemap.xml')
+        return send(res, 200, sitemap(), {
+          'content-type': 'application/xml; charset=utf-8',
+          'cache-control': 'public, max-age=3600',
+        });
       const pm = /^\/p\/([A-Za-z0-9_-]+)(?:\/[^/]*)?$/.exec(path);
       // On hdtilt.com the stream proxy is for signed-in viewers only (the
       // media cookie, or a bearer); ffmpeg's own reads come from inside.
