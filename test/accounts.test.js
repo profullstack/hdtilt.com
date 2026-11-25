@@ -243,6 +243,70 @@ describe('password reset', () => {
   });
 });
 
+describe('OAuth 2.1 for a partner app (b1dz)', () => {
+  const challenge = createHash('sha256').update('v'.repeat(43)).digest('base64url');
+  const q = (over) => ({
+    response_type: 'code',
+    client_id: 'b1dz-web',
+    redirect_uri: 'https://b1dz.com/api/tv/callback',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: 's',
+    ...over,
+  });
+
+  it('names the app on the consent screen and redeems its code without a secret', async () => {
+    const s = (await (await post('/api/auth/login', { login: 'viewer_1', password: 'new-couch-potato' })).json())
+      .tokens;
+    const info = await (await post('/api/oauth/authorize', { query: q() }, s.accessToken)).json();
+    expect(info.clientName).toBe('b1dz terminal');
+    expect(info.about.does).toContain('b1dz terminal');
+    const { redirect } = await (
+      await post('/api/oauth/authorize', { query: q(), decision: 'approve' }, s.accessToken)
+    ).json();
+    const back = new URL(redirect);
+    expect(`${back.origin}${back.pathname}`).toBe('https://b1dz.com/api/tv/callback');
+    const tok = await (
+      await fetch(at('/oauth/token'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: back.searchParams.get('code'),
+          client_id: 'b1dz-web',
+          redirect_uri: 'https://b1dz.com/api/tv/callback',
+          code_verifier: 'v'.repeat(43),
+        }),
+      })
+    ).json();
+    expect(tok.access_token).toMatch(/^ht_at_/);
+    expect((await fetch(at('/api/me'), { headers: { authorization: `Bearer ${tok.access_token}` } })).status).toBe(200);
+  });
+
+  it('refuses any other redirect for the web client, and takes a loopback port for the CLI', async () => {
+    const s = (await (await post('/api/auth/login', { login: 'viewer_1', password: 'new-couch-potato' })).json())
+      .tokens;
+    expect(
+      (
+        await post(
+          '/api/oauth/authorize',
+          { query: q({ redirect_uri: 'https://b1dz.com.evil.example/api/tv/callback' }) },
+          s.accessToken,
+        )
+      ).ok,
+    ).toBe(false);
+    expect(
+      (await post('/api/oauth/authorize', { query: q({ redirect_uri: 'https://b1dz.com/other' }) }, s.accessToken)).ok,
+    ).toBe(false);
+    const cli = await post(
+      '/api/oauth/authorize',
+      { query: q({ client_id: 'b1dz-cli', redirect_uri: 'http://127.0.0.1:51234/callback' }) },
+      s.accessToken,
+    );
+    expect((await cli.json()).clientName).toBe('b1dz CLI');
+  });
+});
+
 describe('OAuth 2.1 for the CLI and TUI', () => {
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');

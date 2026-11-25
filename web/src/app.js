@@ -2290,7 +2290,7 @@ function openReset(token) {
 async function openConsent(query) {
   if (!account.current()) {
     return openAccount({
-      note: 'Sign in to connect the hdtilt CLI and TUI to your account.',
+      note: 'Sign in to connect this app to your hdtilt account.',
       after: () => openConsent(query),
     });
   }
@@ -2304,7 +2304,7 @@ async function openConsent(query) {
   const sh = sheet(
     'account',
     `<h1><img src="/icon.svg" alt="">Connect ${esc(info.clientName)}?</h1>
-    <p class="sub">It will be able to read and change your hdtilt playlists and favorites as <strong>${esc(u.username || u.email)}</strong>. You can sign it out any time with <code>hdtilt logout</code>.</p>
+    <p class="sub">It will be able to ${esc(info.about?.does || 'read and change your hdtilt playlists and favorites')} as <strong>${esc(u.username || u.email)}</strong>. ${info.about?.undo ? esc(info.about.undo) : 'You can sign it out any time with <code>hdtilt logout</code>.'}</p>
     <div class="actions"><button class="btn primary" id="o-yes">Allow</button><button class="btn" id="o-no">Deny</button></div>`,
   );
   const go = (decision) => account.authorize(query, decision).then((r) => location.assign(r.redirect));

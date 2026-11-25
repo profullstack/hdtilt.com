@@ -45,6 +45,30 @@ export const CLI_CLIENT_ID = 'hdtilt-cli';
 export const OAUTH_PREFIX = 'ht';
 
 /**
+ * Other apps that play a person's hdtilt channels with that person's consent.
+ * All are public OAuth 2.1 clients (PKCE, no secret); a redirect must match
+ * exactly, except the port of a loopback address (RFC 8252).
+ */
+export const PARTNER_CLIENTS = {
+  // b1dz.com/terminal: a small live TV tile beside the market terminal.
+  'b1dz-web': { name: 'b1dz terminal', redirectUris: ['https://b1dz.com/api/tv/callback'] },
+  // `b1dz tv` in a real terminal: plays the same channels in mpv.
+  'b1dz-cli': { name: 'b1dz CLI', redirectUris: ['http://127.0.0.1/callback'] },
+};
+
+/** What the consent screen says each client will do, and how to disconnect it. */
+const CLIENT_ABOUT = {
+  'b1dz-web': {
+    does: 'find and play channels from your hdtilt playlists (Fox Business, Bloomberg, CNBC and the like) in the b1dz terminal',
+    undo: 'Disconnect it any time from the TV panel on b1dz.com/terminal.',
+  },
+  'b1dz-cli': {
+    does: 'find and play channels from your hdtilt playlists in the b1dz terminal app on this computer',
+    undo: 'Sign it out any time with b1dz tv logout.',
+  },
+};
+
+/**
  * A tagged-template `sql` over the pg pool the accounts adapter already holds,
  * so the OAuth store and the accounts share one connection pool and one driver.
  */
@@ -395,6 +419,7 @@ export function createAccounts(opts = {}) {
       [CLI_CLIENT_ID]: { name: 'hdtilt CLI and TUI', redirectUris: ['http://127.0.0.1/callback', `${site}/oauth/cli`] },
       // The Roku app (roku/): signs in with a code shown on the TV (./tv.js).
       [TV_CLIENT_ID]: { name: 'hdtilt on your TV', redirectUris: [`${site}/oauth/device`] },
+      ...PARTNER_CLIENTS,
     },
   });
 
@@ -474,7 +499,7 @@ export function createAccounts(opts = {}) {
           }),
         };
       }
-      return { clientName: p.clientName, scope: p.scope };
+      return { clientName: p.clientName, scope: p.scope, about: CLIENT_ABOUT[p.clientId] || null };
     },
     async token(body) {
       await store.init();
