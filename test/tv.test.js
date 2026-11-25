@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { MemoryAdapter } from '@profullstack/auth-system';
 import { createAccounts } from '../src/server/accounts.js';
 import { startServer } from '../src/server/server.js';
-import { createDeviceFlow, normaliseUserCode, rokuPlay } from '../src/server/tv.js';
+import { createDeviceFlow, normaliseUserCode, rankByName, rokuPlay, webPlay } from '../src/server/tv.js';
 import { fakeProvider } from './fixtures.js';
 
 let P;
@@ -222,5 +222,80 @@ describe('Roku play URLs', () => {
     });
     expect(rokuPlay('http://p/movie/u/p/1.mov', { kind: 'vod' }).format).toBe('mp4');
     expect(rokuPlay('http://p/movie/u/p/1.avi', { kind: 'vod' }).url).toMatch(/\?vod=1$/);
+  });
+});
+
+describe('channel finder for another app', () => {
+  const source = () => ({ type: 'm3u', url: `${P.base}/list.m3u` });
+
+  it('ranks the plain name over longer ones, ignoring a country tag and HD', () => {
+    const list = ['CNBC World', 'US| CNBC HD', 'CNBC Awaaz', 'CNBC', 'MSNBC'].map((name) => ({ name }));
+    expect(rankByName(list, 'cnbc').map((c) => c.name)).toEqual([
+      'CNBC',
+      'US| CNBC HD',
+      'CNBC World',
+      'CNBC Awaaz',
+      'MSNBC',
+    ]);
+    const fox = ['Fox Business Network', 'FOX BUSINESS HD', 'Fox News'].map((name) => ({ name }));
+    expect(rankByName(fox, 'fox business')[0].name).toBe('FOX BUSINESS HD');
+  });
+
+  it('gives a browser the proxy path, plus HLS for a raw transport stream', () => {
+    expect(webPlay('http://p.test/live/u/pw/7.ts')).toEqual({
+      kind: 'mpegts',
+      src: '/p/aHR0cDovL3AudGVzdC9saXZlL3UvcHcvNy50cw/7.ts',
+      hls: '/hls/aHR0cDovL3AudGVzdC9saXZlL3UvcHcvNy50cw/index.m3u8',
+    });
+    expect(webPlay('http://p.test/live/u/pw/7.ts', { remux: false }).hls).toBeUndefined();
+    expect(webPlay('http://p.test/a/index.m3u8')).toEqual({
+      kind: 'hls',
+      src: '/p/aHR0cDovL3AudGVzdC9hL2luZGV4Lm0zdTg/index.m3u8',
+    });
+  });
+
+  it('needs a sign-in, names, and a playlist', async () => {
+    expect((await post('/api/tv/find', { names: ['news one'] })).status).toBe(401);
+    expect((await post('/api/tv/find', { source: source() }, session.accessToken)).status).toBe(400);
+    // This account has saved no library yet.
+    const none = await post('/api/tv/find', { names: ['news one'] }, session.accessToken);
+    expect(none.status).toBe(404);
+    expect((await none.json()).code).toBe('no_playlist');
+  });
+
+  it('finds named channels and where to play them', async () => {
+    const r = await (
+      await post('/api/tv/find', { source: source(), names: ['news one', 'nothing like this'] }, session.accessToken)
+    ).json();
+    expect(r.playlists).toBe(1);
+    expect(r.results.map((x) => x.q)).toEqual(['news one', 'nothing like this']);
+    expect(r.results[0].matches[0]).toMatchObject({ name: 'News One', group: 'News' });
+    expect(r.results[0].matches[0].play.src).toMatch(/^\/p\/[A-Za-z0-9_-]+\//);
+    expect(r.results[1].matches).toEqual([]);
+  });
+
+  it('skips a playlist that is down', async () => {
+    const r = await post(
+      '/api/tv/find',
+      { source: { type: 'm3u', url: `${P.base}/missing.m3u` }, names: ['news'] },
+      session.accessToken,
+    );
+    expect(r.status).toBe(200);
+    expect((await r.json()).playlists).toBe(0);
+  });
+
+  it('lets a player on another site cache the preflight and read ranges', async () => {
+    const pre = await fetch(at('/api/tv/find'), {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://b1dz.com',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization',
+      },
+    });
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBe('*');
+    expect(pre.headers.get('access-control-max-age')).toBe('600');
+    expect(pre.headers.get('access-control-allow-headers')).toContain('authorization');
   });
 });

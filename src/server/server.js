@@ -214,6 +214,8 @@ export function createApp(opts = {}) {
     }
     const headers = {
       'access-control-allow-origin': '*',
+      // Without this a player on another site cannot read the range it was given.
+      'access-control-expose-headers': 'content-length, content-range, accept-ranges',
       'cache-control': 'no-store',
       'content-type': type || 'video/mp2t',
     };
@@ -262,6 +264,37 @@ export function createApp(opts = {}) {
     }
 
     // The Roku app: groups and pages of a playlist, kept here a few minutes (./tv.js).
+    // Another app (the b1dz terminal) asking where a few named channels play.
+    // It sends no playlist: the channels come from the person's own library,
+    // which reads only while their key vault is unlocked (423 otherwise).
+    if (path === '/api/tv/find') {
+      if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
+      const b = await readJson(req);
+      let userId = 'local';
+      let sources;
+      try {
+        if (accounts && (gated || req.headers.authorization)) {
+          const claims = await accounts.whoFrom(req.headers.authorization);
+          if (!claims) return send(res, 401, { error: 'Sign in first', code: 'signin' });
+          userId = claims.userId;
+          if (b.source?.type) sources = [{ name: '', source: b.source }];
+          else {
+            const lib = (await accounts.getLibrary(claims)).data || {};
+            const gone = new Set(lib.deleted || []);
+            sources = (lib.playlists || [])
+              .filter((p) => p?.source?.type && !gone.has(p.id))
+              .map((p) => ({ name: p.name || '', source: p.source }));
+          }
+        } else if (b.source?.type) sources = [{ name: '', source: b.source }];
+        else sources = Object.entries((await readConfig()).playlists || {}).map(([name, source]) => ({ name, source }));
+        if (!sources.length)
+          return send(res, 404, { error: 'No playlist in this hdtilt account yet', code: 'no_playlist' });
+        return send(res, 200, await tvData.find(userId, { sources, names: b.names, limit: b.limit }));
+      } catch (e) {
+        return send(res, e.status || 502, { error: String(e.message || e), ...(e.code ? { code: e.code } : {}) });
+      }
+    }
+
     const tvm = /^\/api\/tv\/(load|channels|vod)$/.exec(path);
     if (tvm) {
       if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
@@ -754,6 +787,9 @@ export function createApp(opts = {}) {
         return send(res, 204, '', {
           'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
           'access-control-allow-headers': 'content-type, range, authorization, mcp-protocol-version, mcp-session-id',
+          // A player on another site sends its token on every segment; let
+          // the browser remember the answer instead of asking each time.
+          'access-control-max-age': '600',
         });
       }
       if (path === '/robots.txt') return send(res, 200, robots(), { 'cache-control': 'public, max-age=3600' });

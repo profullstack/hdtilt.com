@@ -13,9 +13,10 @@
 //    and hands out groups and pages, each channel with a URL a Roku plays.
 
 import { createHash, randomBytes } from 'node:crypto';
+import { normName } from '../core/epg.js';
 import { filterByWords } from '../core/match.js';
 import { groupsOf, loadSource, normaliseSource, streamKind } from '../core/sources.js';
-import { b64urlEncode } from '../core/util.js';
+import { b64urlEncode, proxyPath } from '../core/util.js';
 import { browseVod } from '../core/vod.js';
 
 export const TV_CLIENT_ID = 'hdtilt-tv';
@@ -195,6 +196,41 @@ export function rokuPlay(url, { kind = 'live', m3u8 = false, remux = true } = {}
   return { url, format: 'ts' };
 }
 
+/**
+ * Where a browser or mpv plays a live channel through this server. Paths are
+ * relative to the site. `src` is the stream as the provider sends it (through
+ * the proxy, because providers send no CORS); `hls` is the same channel as
+ * HLS for a player that cannot decode a raw transport stream.
+ */
+export function webPlay(url, { remux = true } = {}) {
+  const kind = streamKind(url, 'live');
+  if (kind === 'hls') return { kind: 'hls', src: proxyPath(url, 'hls') };
+  const o = { kind: 'mpegts', src: proxyPath(url, 'mpegts') };
+  if (remux) o.hls = `/hls/${b64urlEncode(url)}/index.m3u8`;
+  return o;
+}
+
+/**
+ * Best match first for a channel asked for by name: the name itself ("CNBC")
+ * beats a longer one that merely contains it ("CNBC World"), and among equals
+ * the shorter name wins. A country tag in front ("US| CNBC HD") does not count
+ * against a channel.
+ */
+export function rankByName(list, q) {
+  const want = normName(q);
+  const score = (c) => {
+    const n = normName(c.name);
+    if (n === want) return 0;
+    if (n.endsWith(want) && n.length - want.length <= 3) return 1; // "us" + name
+    if (n.startsWith(want) || n.endsWith(want)) return 2;
+    return 3;
+  };
+  return list
+    .map((c, i) => ({ c, s: score(c), i }))
+    .sort((a, b) => a.s - b.s || a.c.name.length - b.c.name.length || a.i - b.i)
+    .map((x) => x.c);
+}
+
 const slimChannel = (c, ctx) => {
   const o = { id: c.id, name: c.name, group: c.group, play: rokuPlay(c.url, ctx) };
   if (c.logo) o.logo = c.logo;
@@ -260,6 +296,42 @@ export function createTvData({ fetch, remux = true, ttlMs = 10 * 60_000, max = 4
       if (q && String(q).trim()) list = filterByWords(list, String(q));
       const p = page(list, offset, limit);
       return { ...p, items: p.items.map((c) => slimChannel(c, d.ctx)) };
+    },
+    /**
+     * Look channels up by name across some playlists: for each name asked
+     * for, the best few live channels and where to play them. A playlist the
+     * provider fails to serve is skipped, not fatal.
+     */
+    async find(userId, { sources, names, limit }) {
+      const per = Math.min(5, Math.max(1, Number(limit) || 3));
+      const asked = (Array.isArray(names) ? names : [])
+        .map((n) => String(n).trim())
+        .filter(Boolean)
+        .slice(0, 12);
+      if (!asked.length) throw Object.assign(new Error('names required'), { status: 400 });
+      const lists = [];
+      for (const s of (sources || []).slice(0, 6)) {
+        try {
+          lists.push({ playlist: s.name || '', d: await loaded(userId, s.source) });
+        } catch {
+          /* this playlist is down; the others may still have the channel */
+        }
+      }
+      return {
+        playlists: lists.length,
+        results: asked.map((q) => {
+          const matches = [];
+          for (const { playlist, d } of lists) {
+            const live = d.channels.filter((c) => !c.kind || c.kind === 'live');
+            for (const c of rankByName(filterByWords(live, q), q).slice(0, per)) {
+              const m = { id: c.id, name: c.name, group: c.group, playlist, play: webPlay(c.url, d.ctx) };
+              if (c.logo) m.logo = c.logo;
+              matches.push(m);
+            }
+          }
+          return { q, matches: rankByName(matches, q).slice(0, per) };
+        }),
+      };
     },
     // BrightScript lowercases the keys of an object literal, so a Roku sends `seriesid`.
     async vod(_userId, { source, kind, category, q, seriesId: sid, seriesid, offset, limit }) {
